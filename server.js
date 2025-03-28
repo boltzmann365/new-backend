@@ -5,7 +5,7 @@ const OpenAI = require("openai");
 
 dotenv.config();
 const app = express();
-app.use(cors({ origin: "https://www.trainwithme.in" }));
+app.use(cors({ origin: ["https://trainwithme.in", "http://localhost:3000"] }));
 app.use(express.json());
 
 // ✅ OpenAI API Setup
