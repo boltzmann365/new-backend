@@ -19,16 +19,20 @@ const assistantId = process.env.ASSISTANT_ID;
 
 // ✅ File IDs for Reference Books
 const fileIds = {
-  tamilnaduHistoryBook: "file-UyQKVs91xYHfadeHSjdDw2", // Tamilnadu History Book file ID
-  spectrum: "file-UwRi9bH3uhVh4YBXNbMv1w", // Spectrum file ID
-  laxmikanth: "file-G15UzpuvCRuMG4g6ShCgFK", // Laxmikanth file ID
-  artandculture: "file-Gn3dsACNC2MP2xS9QeN3Je", // Art and Culture by Nitin Singhania file ID 
-  fundamentalsofphysicalgeography: "file-CMWSg6udmgtVZpNS3tDGHW", //Fundamental of physical geography file ID
-  indiangeography: "file-U1nQNyCotU2kcSgF6hrarT", //Indian Geography file ID
-  shankarIAS: "file-Yb1cfrHMATDNQgyUa6jDqw", //Shankar IAS environment file ID
-  previousyearquestionpaper: "file-TGgc65bHqVMxpmj5ULyR6K", // Previous year question paper file ID
-  // Add other file IDs if needed, e.g.:
-  // laxmikanth: process.env.LAXMIKANTH_FILE_ID,
+  TamilnaduHistory: "file-UyQKVs91xYHfadeHSjdDw2",
+  Spectrum: "file-UwRi9bH3uhVh4YBXNbMv1w",
+  ArtAndCulture: "file-Gn3dsACNC2MP2xS9QeN3Je",
+  FundamentalGeography: "file-CMWSg6udmgtVZpNS3tDGHW",
+  IndianGeography: "file-U1nQNyCotU2kcSgF6hrarT",
+  Atlas: "pending", // Placeholder, update with actual file ID once uploaded
+  Science: "file-TGgc65bHqVMxpmj5ULyR6K", // Disha IAS book for Science
+  Environment: "file-Yb1cfrHMATDNQgyUa6jDqw", // Shankar IAS Environment book
+  Economy: "[TBD - Ramesh Singh file ID]", // Placeholder for Ramesh Singh book
+  EconomicSurvey2025: "[TBD - Economic Survey file ID]", // Placeholder for Economic Survey
+  CSAT: "[TBD - CSAT file ID]", // Placeholder for CSAT resource
+  CurrentAffairs: "file-5BX6sBLZ2ws44NBUTbcyWg", // Current Affairs resource
+  PreviousYearPaper: "file-TGgc65bHqVMxpmj5ULyR6K", // Disha IAS book for Previous Year Papers (same as Science)
+  Polity: "file-G15UzpuvCRuMG4g6ShCgFK", // Laxmikanth book for Polity
 };
 
 // ✅ Store user threads (in-memory for simplicity)
@@ -43,7 +47,8 @@ const updateAssistantWithFiles = async () => {
         file_search: {
           file_ids: [
             fileIds.tamilnaduHistoryBook,
-            fileIds.spectrum, // Attach the Spectrum file
+            fileIds.spectrum,
+            fileIds.artAndCulture, // Attach the Art and Culture file
           ],
         },
       },
@@ -101,6 +106,12 @@ app.post("/ask", async (req, res) => {
       - It focuses on **modern Indian history**, covering topics such as the advent of Europeans, British rule, the freedom struggle, and post-independence India.  
       - The book includes chapters like Sources of Modern Indian History, Revolt of 1857, Nationalist Movement, and Post-Independence Consolidation, as outlined in its table of contents.  
       - The Spectrum book file has been attached to the assistant for file search (file ID: file-UwRi9bH3uhVh4YBXNbMv1w). Use this file as the sole source for generating responses related to the Spectrum book.
+
+      📘 **About the Nitin Singhania Art and Culture Book**  
+      - The book, titled *Indian Art and Culture* by Nitin Singhania, is a widely used resource for UPSC aspirants.  
+      - It focuses on **Indian art, culture, architecture, and heritage**, covering topics such as Indian architecture, painting, performing arts, festivals, and UNESCO heritage sites.  
+      - The book includes chapters like Indian Architecture, Performing Arts: Dance, Indian Cinema, and UNESCO’s List of Intangible Cultural Heritage, as outlined in its table of contents.  
+      - The Nitin Singhania Art and Culture book file has been attached to the assistant for file search (file ID: file-Gn3dsACNC2MP2xS9QeN3Je). Use this file as the sole source for generating responses related to the Nitin Singhania Art and Culture book.
 
       **Your Instructions:**  
       - 🎯 **Answer ONLY from the requested book and chapter using the attached file.**  
