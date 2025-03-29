@@ -20,9 +20,9 @@ const assistantId = process.env.ASSISTANT_ID;
 // ✅ File IDs for Reference Books
 const fileIds = {
   tamilnaduHistoryBook: "file-UyQKVs91xYHfadeHSjdDw2", // Tamilnadu History Book file ID
+  spectrum: "file-UwRi9bH3uhVh4YBXNbMv1w", // Spectrum file ID
   // Add other file IDs if needed, e.g.:
   // laxmikanth: process.env.LAXMIKANTH_FILE_ID,
-  // spectrum: process.env.SPECTRUM_FILE_ID,
 };
 
 // ✅ Store user threads (in-memory for simplicity)
@@ -35,11 +35,14 @@ const updateAssistantWithFiles = async () => {
       tools: [{ type: "file_search" }],
       tool_resources: {
         file_search: {
-          file_ids: [fileIds.tamilnaduHistoryBook], // Attach the Tamilnadu History Book file
+          file_ids: [
+            fileIds.tamilnaduHistoryBook,
+            fileIds.spectrum, // Attach the Spectrum file
+          ],
         },
       },
     });
-    console.log(`✅ Assistant ${assistantId} updated with file search tool and Tamilnadu History Book file.`);
+    console.log(`✅ Assistant ${assistantId} updated with file search tool and reference book files.`);
   } catch (error) {
     console.error("❌ Error updating assistant with file search:", error.message);
   }
@@ -85,7 +88,13 @@ app.post("/ask", async (req, res) => {
       - The Tamilnadu History Book is an 11th-grade textbook published by the Tamil Nadu State Board.  
       - Despite its name, the book covers the **entire history of India**, not just Tamil Nadu-specific history.  
       - The book includes topics such as the Indus Civilisation, Vedic Cultures, Mauryan Empire, Guptas, Mughals, Marathas, British Rule, and more, as outlined in its table of contents.  
-      - The Tamilnadu History Book file has been attached to the assistant for file search. Use this file as the sole source for generating responses related to the Tamilnadu History Book.
+      - The Tamilnadu History Book file has been attached to the assistant for file search (file ID: file-UyQKVs91xYHfadeHSjdDw2). Use this file as the sole source for generating responses related to the Tamilnadu History Book.
+
+      📘 **About the Spectrum Book**  
+      - The Spectrum book, titled *A Brief History of Modern India*, is a widely used resource for UPSC aspirants.  
+      - It focuses on **modern Indian history**, covering topics such as the advent of Europeans, British rule, the freedom struggle, and post-independence India.  
+      - The book includes chapters like Sources of Modern Indian History, Revolt of 1857, Nationalist Movement, and Post-Independence Consolidation, as outlined in its table of contents.  
+      - The Spectrum book file has been attached to the assistant for file search (file ID: file-UwRi9bH3uhVh4YBXNbMv1w). Use this file as the sole source for generating responses related to the Spectrum book.
 
       **Your Instructions:**  
       - 🎯 **Answer ONLY from the requested book and chapter using the attached file.**  
