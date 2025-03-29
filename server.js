@@ -21,6 +21,12 @@ const assistantId = process.env.ASSISTANT_ID;
 const fileIds = {
   tamilnaduHistoryBook: "file-UyQKVs91xYHfadeHSjdDw2", // Tamilnadu History Book file ID
   spectrum: "file-UwRi9bH3uhVh4YBXNbMv1w", // Spectrum file ID
+  laxmikanth: "file-G15UzpuvCRuMG4g6ShCgFK", // Laxmikanth file ID
+  artandculture: "file-Gn3dsACNC2MP2xS9QeN3Je", // Art and Culture by Nitin Singhania file ID 
+  fundamentalsofphysicalgeography: "file-CMWSg6udmgtVZpNS3tDGHW", //Fundamental of physical geography file ID
+  indiangeography: "file-U1nQNyCotU2kcSgF6hrarT", //Indian Geography file ID
+  shankarIAS: "file-Yb1cfrHMATDNQgyUa6jDqw", //Shankar IAS environment file ID
+  previousyearquestionpaper: "file-TGgc65bHqVMxpmj5ULyR6K", // Previous year question paper file ID
   // Add other file IDs if needed, e.g.:
   // laxmikanth: process.env.LAXMIKANTH_FILE_ID,
 };
