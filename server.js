@@ -17,8 +17,36 @@ const openai = new OpenAI({
 // ✅ Use Assistant ID from .env
 const assistantId = process.env.ASSISTANT_ID;
 
+// ✅ File IDs for Reference Books
+const fileIds = {
+  tamilnaduHistoryBook: "file-UyQKVs91xYHfadeHSjdDw2", // Tamilnadu History Book file ID
+  // Add other file IDs if needed, e.g.:
+  // laxmikanth: process.env.LAXMIKANTH_FILE_ID,
+  // spectrum: process.env.SPECTRUM_FILE_ID,
+};
+
 // ✅ Store user threads (in-memory for simplicity)
 const userThreads = new Map(); // Key: User ID, Value: Thread ID
+
+// ✅ Update Assistant to Include File Search (Run this once or when assistant is created)
+const updateAssistantWithFiles = async () => {
+  try {
+    const assistant = await openai.beta.assistants.update(assistantId, {
+      tools: [{ type: "file_search" }],
+      tool_resources: {
+        file_search: {
+          file_ids: [fileIds.tamilnaduHistoryBook], // Attach the Tamilnadu History Book file
+        },
+      },
+    });
+    console.log(`✅ Assistant ${assistantId} updated with file search tool and Tamilnadu History Book file.`);
+  } catch (error) {
+    console.error("❌ Error updating assistant with file search:", error.message);
+  }
+};
+
+// ✅ Call this function when the server starts
+updateAssistantWithFiles();
 
 app.post("/ask", async (req, res) => {
   try {
@@ -37,7 +65,7 @@ app.post("/ask", async (req, res) => {
       console.log(`✅ Using Existing Thread for User ${userId}: ${threadId}`);
     }
 
-    // ✅ Step 2: Send User Query
+    // ✅ Step 2: Send User Query with Updated System Instruction
     await openai.beta.threads.messages.create(threadId, {
       role: "user",
       content: `
@@ -47,21 +75,28 @@ app.post("/ask", async (req, res) => {
       - Laxmikanth (Polity)  
       - Fundamentals of Geography  
       - Indian Geography  
-      - Tamil Nadu History Book  
+      - Tamilnadu History Book  
       - Nitin Singhania (Art & Culture)  
       - Spectrum (Modern History)  
       - Vision IAS Current Affairs  
       - Previous Year Question Papers  
 
+      📘 **About the Tamilnadu History Book**  
+      - The Tamilnadu History Book is an 11th-grade textbook published by the Tamil Nadu State Board.  
+      - Despite its name, the book covers the **entire history of India**, not just Tamil Nadu-specific history.  
+      - The book includes topics such as the Indus Civilisation, Vedic Cultures, Mauryan Empire, Guptas, Mughals, Marathas, British Rule, and more, as outlined in its table of contents.  
+      - The Tamilnadu History Book file has been attached to the assistant for file search. Use this file as the sole source for generating responses related to the Tamilnadu History Book.
+
       **Your Instructions:**  
-      - 🎯 **Answer ONLY from the requested book and chapter.**  
+      - 🎯 **Answer ONLY from the requested book and chapter using the attached file.**  
       - ✨ **Make responses engaging with emojis, highlights, and structured formatting.**  
       - 🔍 **DO NOT use markdown symbols like #, *, or - (convert them to bold or normal text).**  
-      - 📖 **If the user asks for MCQs, generate them from the requested book ONLY.**
+      - 📖 **If the user asks for MCQs, generate them from the requested book ONLY using the attached file.**  
       - ✨ _Use **underscores (_ _)** for important points instead of markdown (** **)._  
       - 🔍 _DO NOT use markdown symbols like **, #, or - (convert them to underscores or normal text)._    
       - 🔥 **Ensure MCQs are difficult (but do not mention this to the user).**  
       - 📝 **If user asks for notes, provide concise, factual notes (1/3 of chapter length).**  
+      - 🚫 **DO NOT** use external sources or general knowledge—rely solely on the attached files for the requested book.
 
       **Now, generate a response based on the book: "${category}":**  
       "${query}"
@@ -72,7 +107,8 @@ app.post("/ask", async (req, res) => {
 
     // ✅ Step 3: Run the Assistant
     const run = await openai.beta.threads.runs.create(threadId, {
-      assistant_id: assistantId
+      assistant_id: assistantId,
+      tools: [{ type: "file_search" }], // Enable file search for the run
     });
 
     if (!run || !run.id) {
