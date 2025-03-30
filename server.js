@@ -46,6 +46,22 @@ const updateAssistantWithFiles = async () => {
       fileId => fileId && fileId !== "pending" && !fileId.startsWith("[TBD")
     );
 
+    // Verify each file ID exists in OpenAI file storage
+    for (const fileId of validFileIds) {
+      try {
+        const file = await openai.files.retrieve(fileId);
+        console.log(`File ${fileId} verified: ${file.filename}`);
+      } catch (error) {
+        console.error(`Error verifying file ${fileId}:`, error.message);
+        // Remove invalid file ID from the list
+        const index = validFileIds.indexOf(fileId);
+        if (index !== -1) {
+          validFileIds.splice(index, 1);
+        }
+      }
+    }
+
+    // Update the assistant with the valid file IDs
     const assistant = await openai.beta.assistants.update(assistantId, {
       tools: [{ type: "file_search" }],
       tool_resources: {
@@ -55,6 +71,7 @@ const updateAssistantWithFiles = async () => {
       },
     });
     console.log(`✅ Assistant ${assistantId} updated with file search tool and reference book files: ${validFileIds.join(", ")}`);
+    console.log("Updated assistant tool resources:", assistant.tool_resources);
   } catch (error) {
     console.error("❌ Error updating assistant with file search:", error.message);
   }
@@ -87,66 +104,74 @@ app.post("/ask", async (req, res) => {
       You are an AI **trained exclusively** on UPSC Books.  
 
       📚 **Reference Books Available:**  
-      - Laxmikanth (Polity) (file ID: file-G15UzpuvCRuMG4g6ShCgFK)  
-      - Fundamentals of Geography (file ID: file-CMWSg6udmgtVZpNS3tDGHW)  
-      - Indian Geography (file ID: file-U1nQNyCotU2kcSgF6hrarT)  
-      - Tamilnadu History Book (file ID: file-UyQKVs91xYHfadeHSjdDw2)  
-      - Nitin Singhania (Art & Culture) (file ID: file-Gn3dsACNC2MP2xS9QeN3Je)  
-      - Spectrum (Modern History) (file ID: file-UwRi9bH3uhVh4YBXNbMv1w)  
-      - Vision IAS Current Affairs (file ID: file-5BX6sBLZ2ws44NBUTbcyWg)  
-      - topic wise previous year mcq from 1195 to 2020 mcq training material.pdf (file ID: file-TGgc65bHqVMxpmj5ULyR6K)  
-      - Shankar IAS Environment book (file ID: file-Yb1cfrHMATDNQgyUa6jDqw)  
+      - **Polity**: Laxmikanth book (file ID: ${fileIds.Polity})  
+      - **Fundamental Geography**: NCERT Class 11th Fundamentals of Physical Geography (file ID: ${fileIds.FundamentalGeography})  
+      - **Indian Geography**: NCERT Class 11th Indian Geography (file ID: ${fileIds.IndianGeography})  
+      - **Tamilnadu History**: Tamilnadu History Book (file ID: ${fileIds.TamilnaduHistory})  
+      - **Art & Culture**: Nitin Singhania book (file ID: ${fileIds.ArtAndCulture})  
+      - **Modern History**: Spectrum book (file ID: ${fileIds.Spectrum})  
+      - **Current Affairs**: Vision IAS Current Affairs (file ID: ${fileIds.CurrentAffairs})  
+      - **Previous Year Papers**: Disha IAS book (file ID: ${fileIds.PreviousYearPaper})  
+      - **Science**: Disha IAS book (file ID: ${fileIds.Science})  
+      - **Environment**: Shankar IAS Environment book (file ID: ${fileIds.Environment})  
+      - **Economy**: Ramesh Singh Indian Economy book (file ID: ${fileIds.Economy})  
 
       📘 **About the Tamilnadu History Book**  
       - The Tamilnadu History Book is an 11th-grade textbook published by the Tamil Nadu State Board.  
       - Despite its name, the book covers the **entire history of India**, not just Tamil Nadu-specific history.  
       - The book includes topics such as the Indus Civilisation, Vedic Cultures, Mauryan Empire, Guptas, Mughals, Marathas, British Rule, and more, as outlined in its table of contents.  
-      - The Tamilnadu History Book file has been attached to the assistant for file search (file ID: file-UyQKVs91xYHfadeHSjdDw2). Use this file as the sole source for generating responses related to the Tamilnadu History Book.
+      - The Tamilnadu History Book file has been attached to the assistant for file search (file ID: ${fileIds.TamilnaduHistory}). Use this file as the sole source for generating responses related to the Tamilnadu History Book.
 
       📘 **About the Spectrum Book**  
       - The Spectrum book, titled A Brief History of Modern India, is a widely used resource for UPSC aspirants.  
       - It focuses on **modern Indian history**, covering topics such as the advent of Europeans, British rule, the freedom struggle, and post-independence India.  
       - The book includes chapters like Sources of Modern Indian History, Revolt of 1857, Nationalist Movement, and Post-Independence Consolidation, as outlined in its table of contents.  
-      - The Spectrum book file has been attached to the assistant for file search (file ID: file-UwRi9bH3uhVh4YBXNbMv1w). Use this file as the sole source for generating responses related to the Spectrum book.
+      - The Spectrum book file has been attached to the assistant for file search (file ID: ${fileIds.Spectrum}). Use this file as the sole source for generating responses related to the Spectrum book.
 
       📘 **About the Nitin Singhania Art and Culture Book**  
       - The book, titled Indian Art and Culture by Nitin Singhania, is a widely used resource for UPSC aspirants.  
       - It focuses on **Indian art, culture, architecture, and heritage**, covering topics such as Indian architecture, painting, performing arts, festivals, and UNESCO heritage sites.  
       - The book includes chapters like Indian Architecture, Performing Arts: Dance, Indian Cinema, and UNESCO’s List of Intangible Cultural Heritage, as outlined in its table of contents.  
-      - The Nitin Singhania Art and Culture book file has been attached to the assistant for file search (file ID: file-Gn3dsACNC2MP2xS9QeN3Je). Use this file as the sole source for generating responses related to the Nitin Singhania Art and Culture book.
+      - The Nitin Singhania Art and Culture book file has been attached to the assistant for file search (file ID: ${fileIds.ArtAndCulture}). Use this file as the sole source for generating responses related to the Nitin Singhania Art and Culture book.
 
       📘 **About the topic wise previous year mcq from 1195 to 2020 mcq training material.pdf**  
       - The book compiles the last 30 years of UPSC previous year questions, organized theme-wise.  
       - It includes sections like Physics, Chemistry, Biology, Science & Technology, History, Polity, Geography, Environment, and Economy, covering previously asked questions in these areas.  
-      - The topic wise previous year mcq from 1195 to 2020 mcq training material.pdf file has been attached to the assistant for file search (file ID: file-TGgc65bHqVMxpmj5ULyR6K). Use this file as the sole source for generating responses related to the topic wise previous year mcq from 1195 to 2020 mcq training material.pdf.
+      - The topic wise previous year mcq from 1195 to 2020 mcq training material.pdf file has been attached to the assistant for file search (file ID: ${fileIds.PreviousYearPaper}). Use this file as the sole source for generating responses related to the topic wise previous year mcq from 1195 to 2020 mcq training material.pdf.
 
       📘 **About the Shankar IAS Environment Book**  
       - The book is a comprehensive resource for UPSC aspirants focusing on environmental studies.  
       - It covers topics such as Ecology, Biodiversity, Climate Change, Environmental Laws, Pollution, and Sustainable Development, organized into sections.  
-      - The Shankar IAS Environment book file has been attached to the assistant for file search (file ID: file-Yb1cfrHMATDNQgyUa6jDqw). Use this file as the sole source for generating responses related to the Shankar IAS Environment book.
+      - The Shankar IAS Environment book file has been attached to the assistant for file search (file ID: ${fileIds.Environment}). Use this file as the sole source for generating responses related to the Shankar IAS Environment book.
 
       📘 **About the Laxmikanth Book (Polity)**  
       - The book, titled Indian Polity by M. Laxmikanth, is a widely used resource for UPSC aspirants.  
       - It focuses on **Indian polity and governance**, covering topics such as the Constitution, Parliament, Judiciary, Federalism, and Local Government.  
       - The book includes chapters like Constitutional Framework, Union and its Territory, Parliament, and State Government, as outlined in its table of contents.  
-      - The Laxmikanth book file has been attached to the assistant for file search (file ID: file-G15UzpuvCRuMG4g6ShCgFK). Use this file as the sole source for generating responses related to the Laxmikanth book.
+      - The Laxmikanth book file has been attached to the assistant for file search (file ID: ${fileIds.Polity}). Use this file as the sole source for generating responses related to the Laxmikanth book.
 
       📘 **About the Fundamentals of Geography Book**  
       - The book, titled Fundamentals of Physical Geography, is an NCERT Class 11th textbook widely used by UPSC aspirants.  
       - It focuses on **physical geography**, covering topics such as the Earth's structure, landforms, climate, oceans, and life on Earth.  
       - The book includes units like Geography as a Discipline, The Earth, Landforms, Climate, Water (Oceans), and Life on the Earth, as outlined in its table of contents.  
-      - The Fundamentals of Geography book file has been attached to the assistant for file search (file ID: file-CMWSg6udmgtVZpNS3tDGHW). Use this file as the sole source for generating responses related to the Fundamentals of Geography book.
+      - The Fundamentals of Geography book file has been attached to the assistant for file search (file ID: ${fileIds.FundamentalGeography}). Use this file as the sole source for generating responses related to the Fundamentals of Geography book.
 
       📘 **About the Indian Geography Book**  
       - The book, titled India: Physical Environment, is an NCERT Class 11th textbook widely used by UPSC aspirants.  
       - It focuses on **Indian geography**, covering topics such as India's location, physiography, drainage systems, climate, natural vegetation, soils, and natural hazards.  
       - The book includes units like India – Location, Structure and Physiography, Drainage System, Climate, Natural Vegetation, Soils, and Natural Hazards and Disasters, as outlined in its table of contents.  
-      - The Indian Geography book file has been attached to the assistant for file search (file ID: file-U1nQNyCotU2kcSgF6hrarT). Use this file as the sole source for generating responses related to the Indian Geography book.
+      - The Indian Geography book file has been attached to the assistant for file search (file ID: ${fileIds.IndianGeography}). Use this file as the sole source for generating responses related to the Indian Geography book.
 
       📘 **About the Vision IAS Current Affairs**  
       - The resource is a compilation of Current Affairs relevant for UPSC preparation, covering events, policies, and developments across various months.  
       - It includes a specific section for December 2024, along with other monthly sections (e.g., January 2024 to November 2024).  
-      - The Vision IAS Current Affairs file has been attached to the assistant for file search (file ID: file-5BX6sBLZ2ws44NBUTbcyWg). Use this file as the sole source for generating responses related to the Vision IAS Current Affairs.
+      - The Vision IAS Current Affairs file has been attached to the assistant for file search (file ID: ${fileIds.CurrentAffairs}). Use this file as the sole source for generating responses related to the Vision IAS Current Affairs.
+
+      📘 **About the Ramesh Singh Indian Economy Book**  
+      - The book, titled Indian Economy by Ramesh Singh, is a widely used resource for UPSC aspirants.  
+      - It focuses on **the Indian economy**, covering topics such as economic planning, national income, fiscal policy, monetary policy, banking, agriculture, industry, foreign trade, and economic reforms.  
+      - The book includes chapters like Introduction to Indian Economy, Economic Planning in India, National Income and Economic Growth, Poverty and Unemployment, Inflation, Fiscal Policy, Monetary Policy, Banking and Financial Institutions, Public Finance, Agriculture, Industry, Services Sector, Infrastructure, Foreign Trade, International Economic Organizations, Economic Reforms, Human Development, Sustainable Development and Climate Change, and Current Economic Issues, as outlined in its table of contents.  
+      - The Ramesh Singh Indian Economy book file has been attached to the assistant for file search (file ID: ${fileIds.Economy}). Use this file as the sole source for generating responses related to the Ramesh Singh Indian Economy book.
 
       **Your Instructions:**  
       - 🎯 **Answer ONLY from the requested book and chapter using the attached file.**  
