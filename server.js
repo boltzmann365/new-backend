@@ -187,6 +187,15 @@ app.post("/ask", async (req, res) => {
       - For queries related to Polity, generate 1 MCQ from the specified chapter or the entire Laxmikanth Polity Book (file ID: ${fileIds.Polity}) if no chapter is specified.  
       - The MCQ must follow UPSC-style formats (e.g., statement-based, assertion-reason, matching, chronological order, single correct answer).  
       - Mimic the structure and complexity of the following UPSC-style examples:  
+      -- The MCQ MUST follow ONE of the 7 UPSC-style formats listed below. RANDOMLY SELECT a different format for each request to ensure variety (e.g., do not repeat the same format consecutively unless all formats have been used at least once):  
+        1. Statement-Based (multiple statements, ask how many are correct)  
+        2. Assertion-Reason (A and R with explanation)  
+        3. Matching (list items to match with options)  
+        4. Correct/Incorrect Statements (identify which are correct)  
+        5. Chronological Order (arrange events)  
+        6. Correctly Matched Pairs (identify correct pairs)  
+        7. Single Correct Answer (one correct option)
+        **Examples for Each Format (Follow These Structures):**
 
       **Example 1 (Statement-Based):**  
       Question: Consider the following statements regarding the Goods and Services Tax (GST):  
