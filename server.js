@@ -123,16 +123,10 @@ app.post("/ask", async (req, res) => {
 
       **Instructions for MCQ Generation (Specific to Polity Queries):**  
       - For queries related to Polity, generate 1 MCQ from the specified chapter or the entire Laxmikanth Polity Book (file ID: ${fileIds.Polity}) if no chapter is specified.  
-      - The MCQ MUST follow ONE of the 7 UPSC-style formats listed below. RANDOMLY SELECT a different format for each request to ensure variety (e.g., cycle through all 7 formats before repeating any):  
+      - The MCQ MUST follow the Statement-Based UPSC-style format listed below:  
         1. Statement-Based (multiple statements, ask how many are correct)  
-        2. Assertion-Reason (A and R with explanation)  
-        3. Matching (list items to match with options)  
-        4. Correct/Incorrect Statements (identify which are correct)  
-        5. Chronological Order (arrange events)  
-        6. Correctly Matched Pairs (identify correct pairs)  
-        7. Single Correct Answer (one correct option)  
 
-      **Examples for Each Format (Follow These Structures):**  
+      **Example for Statement-Based Format (Follow This Structure):**  
 
       Example 1 (Statement-Based):  
       Question: Consider the following statements regarding Fundamental Rights:  
@@ -148,88 +142,9 @@ app.post("/ask", async (req, res) => {
       Correct Answer: (d)  
       Explanation: Fundamental Rights can be suspended during a National Emergency (except Articles 20 and 21), are available to both citizens and foreigners (e.g., Article 14), and the Right to Property is no longer a Fundamental Right due to the 44th Amendment.
 
-      Example 2 (Assertion-Reason):  
-      Question: Assertion (A): Fundamental Rights can be suspended during a National Emergency.  
-      Reason (R): Article 359 allows the President to suspend the right to move courts for enforcement of Fundamental Rights.  
-      Options:  
-      (a) Both A and R are true, and R is the correct explanation of A  
-      (b) Both A and R are true, but R is NOT the correct explanation of A  
-      (c) A is true, but R is false  
-      (d) A is false, but R is true  
-      Correct Answer: (a)  
-      Explanation: Both A and R are true, and R correctly explains A because Article 359 empowers the President to suspend judicial enforcement of Fundamental Rights during an emergency.
-
-      Example 3 (Matching):  
-      Question: Match the following Fundamental Rights with their corresponding Articles:  
-      Right              Article  
-      (A) Right to Equality    (1) Article 19  
-      (B) Right to Freedom     (2) Article 14  
-      (C) Right to Constitutional Remedies (3) Article 32  
-      Select the correct answer using the codes:  
-      Options:  
-      (a) A-2, B-1, C-3  
-      (b) A-1, B-2, C-3  
-      (c) A-2, B-3, C-1  
-      (d) A-3, B-1, C-2  
-      Correct Answer: (a)  
-      Explanation: Right to Equality is under Article 14, Right to Freedom under Article 19, and Right to Constitutional Remedies under Article 32.
-
-      Example 4 (Correct/Incorrect Statements):  
-      Question: With reference to Fundamental Rights, consider the following statements:  
-      1. The Right to Education is a Fundamental Right under Article 21A.  
-      2. The Right to Property is a Fundamental Right under Article 31.  
-      3. Fundamental Rights are enforceable only against the State.  
-      Which of the statements given above is/are correct?  
-      Options:  
-      (a) 1 only  
-      (b) 1 and 3 only  
-      (c) 2 and 3 only  
-      (d) 1, 2, and 3  
-      Correct Answer: (b)  
-      Explanation: Statement 1 is correct (Article 21A). Statement 2 is incorrect (Right to Property is a legal right under Article 300A). Statement 3 is correct as Fundamental Rights are primarily enforceable against the State.
-
-      Example 5 (Chronological Order):  
-      Question: Arrange the following constitutional amendments related to Fundamental Rights in chronological order:  
-      1. 1st Amendment (1951)  
-      2. 44th Amendment (1978)  
-      3. 86th Amendment (2002)  
-      Select the correct order:  
-      Options:  
-      (a) 1-2-3  
-      (b) 2-1-3  
-      (c) 3-2-1  
-      (d) 1-3-2  
-      Correct Answer: (a)  
-      Explanation: 1st Amendment (1951) added restrictions to free speech, 44th Amendment (1978) removed Right to Property as a Fundamental Right, and 86th Amendment (2002) added Right to Education.
-
-      Example 6 (Correctly Matched Pairs):  
-      Question: Consider the following pairs:  
-      Fundamental Right    Article  
-      (A) Right to Equality    Article 14  
-      (B) Right to Freedom     Article 21  
-      (C) Right Against Exploitation    Article 23  
-      Which of the pairs are correctly matched?  
-      Options:  
-      (a) A and B only  
-      (b) B and C only  
-      (c) A and C only  
-      (d) A, B, and C  
-      Correct Answer: (c)  
-      Explanation: Right to Equality is under Article 14 (A is correct), Right to Freedom includes Article 19 not 21 (B is incorrect), Right Against Exploitation is under Article 23 (C is correct).
-
-      Example 7 (Single Correct Answer):  
-      Question: Which one of the following is NOT a Fundamental Right under the Constitution of India?  
-      Options:  
-      (a) Right to Equality  
-      (b) Right to Freedom  
-      (c) Right to Property  
-      (d) Right Against Exploitation  
-      Correct Answer: (c)  
-      Explanation: Right to Property was removed as a Fundamental Right by the 44th Amendment and is now a legal right under Article 300A.
-
       **Response Structure for MCQs:**  
       - Use this EXACT structure for the response with PLAIN TEXT headers (no bold markers like **):  
-        Question: [Full question text including statements, assertion-reason, or matching pairs if applicable]  
+        Question: [Full question text including statements]  
         Options:  
         (a) [Option A]  
         (b) [Option B]  
