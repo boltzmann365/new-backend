@@ -29,7 +29,7 @@ const fileIds = {
   Environment: "file-Yb1cfrHMATDNQgyUa6jDqw", // Shankar IAS Environment book
   Economy: "file-TJ5Djap1uv4fZeyM5c6sKU", // Ramesh Singh book
   EconomicSurvey2025: "[TBD - Economic Survey file ID]", // Placeholder for Economic Survey
-  CSAT: "[TBD - CSAT file ID]", // Placeholder for CSAT resource
+  CSAT: "file-TGgc65bHqVMxpmj5ULyR6K", // Disha IAS book for CSAT (same as Science and PreviousYearPaper)
   CurrentAffairs: "file-5BX6sBLZ2ws44NBUTbcyWg", // Current Affairs resource
   PreviousYearPaper: "file-TGgc65bHqVMxpmj5ULyR6K", // Disha IAS book for Previous Year Papers (same as Science)
   Polity: "file-G15UzpuvCRuMG4g6ShCgFK", // Laxmikanth book for Polity
@@ -115,6 +115,7 @@ app.post("/ask", async (req, res) => {
       - **Science**: Disha IAS book (file ID: ${fileIds.Science})  
       - **Environment**: Shankar IAS Environment book (file ID: ${fileIds.Environment})  
       - **Economy**: Ramesh Singh Indian Economy book (file ID: ${fileIds.Economy})  
+      - **CSAT**: Disha IAS book (file ID: ${fileIds.CSAT})  
 
       📘 **About the Tamilnadu History Book**  
       - The Tamilnadu History Book is an 11th-grade textbook published by the Tamil Nadu State Board.  
@@ -136,7 +137,7 @@ app.post("/ask", async (req, res) => {
 
       📘 **About the topic wise previous year mcq from 1195 to 2020 mcq training material.pdf**  
       - The book compiles the last 30 years of UPSC previous year questions, organized theme-wise.  
-      - It includes sections like Physics, Chemistry, Biology, Science & Technology, History, Polity, Geography, Environment, and Economy, covering previously asked questions in these areas.  
+      - It includes sections like Physics, Chemistry, Biology, Science & Technology, History, Polity, Geography, Environment, Economy, and CSAT, covering previously asked questions in these areas.  
       - The topic wise previous year mcq from 1195 to 2020 mcq training material.pdf file has been attached to the assistant for file search (file ID: ${fileIds.PreviousYearPaper}). Use this file as the sole source for generating responses related to the topic wise previous year mcq from 1195 to 2020 mcq training material.pdf.
 
       📘 **About the Shankar IAS Environment Book**  
