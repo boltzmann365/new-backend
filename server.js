@@ -27,7 +27,7 @@ const fileIds = {
   Atlas: "pending", // Placeholder, update with actual file ID once uploaded
   Science: "file-TGgc65bHqVMxpmj5ULyR6K", // Disha IAS book for Science
   Environment: "file-Yb1cfrHMATDNQgyUa6jDqw", // Shankar IAS Environment book
-  Economy: "[TBD - Ramesh Singh file ID]", // Placeholder for Ramesh Singh book
+  Economy: "file-TJ5Djap1uv4fZeyM5c6sKU", // Ramesh Singh book
   EconomicSurvey2025: "[TBD - Economic Survey file ID]", // Placeholder for Economic Survey
   CSAT: "[TBD - CSAT file ID]", // Placeholder for CSAT resource
   CurrentAffairs: "file-5BX6sBLZ2ws44NBUTbcyWg", // Current Affairs resource
