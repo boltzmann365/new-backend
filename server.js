@@ -123,12 +123,12 @@ app.post("/ask", async (req, res) => {
 
       **Instructions for MCQ Generation (Specific to Polity Queries):**  
       - For queries related to Polity, generate 1 MCQ from the specified chapter or the entire Laxmikanth Polity Book (file ID: ${fileIds.Polity}) if no chapter is specified.  
-      - The MCQ MUST follow the Statement-Based UPSC-style format listed below:  
+      - The MCQ MUST follow one of the UPSC-style formats listed below (choose randomly between the two formats for each request):  
         1. Statement-Based (multiple statements, ask how many are correct)  
+        2. Assertion-Reason (A and R statements, evaluate their truth and relationship)  
 
-      **Example for Statement-Based Format (Follow This Structure):**  
-
-      Example 1 (Statement-Based):  
+      **Format 1: Statement-Based (Follow This Structure):**  
+      Example:  
       Question: Consider the following statements regarding Fundamental Rights:  
       1. They are absolute and cannot be suspended.  
       2. They are available only to citizens.  
@@ -142,9 +142,21 @@ app.post("/ask", async (req, res) => {
       Correct Answer: (d)  
       Explanation: Fundamental Rights can be suspended during a National Emergency (except Articles 20 and 21), are available to both citizens and foreigners (e.g., Article 14), and the Right to Property is no longer a Fundamental Right due to the 44th Amendment.
 
-      **Response Structure for MCQs:**  
+      **Format 2: Assertion-Reason (Follow This Structure):**  
+      Example:  
+      Question: Assertion (A): The Indian National Congress adopted the policy of non-cooperation in 1920.  
+      Reason (R): The Rowlatt Act and Jallianwala Bagh massacre created widespread discontent.  
+      Options:  
+      (a) Both A and R are true, and R is the correct explanation of A  
+      (b) Both A and R are true, but R is NOT the correct explanation of A  
+      (c) A is true, but R is false  
+      (d) A is false, but R is true  
+      Correct Answer: (a)  
+      Explanation: The Rowlatt Act (1919) and the Jallianwala Bagh massacre (1919) led to widespread discontent, which prompted the Indian National Congress to adopt the Non-Cooperation Movement in 1920 under Mahatma Gandhi's leadership. Thus, R correctly explains A.
+
+      **Response Structure for MCQs (Applies to Both Formats):**  
       - Use this EXACT structure for the response with PLAIN TEXT headers (no bold markers like **):  
-        Question: [Full question text including statements]  
+        Question: [Full question text including statements or A/R]  
         Options:  
         (a) [Option A]  
         (b) [Option B]  
