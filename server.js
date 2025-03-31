@@ -35,6 +35,75 @@ const fileIds = {
   Polity: "file-G15UzpuvCRuMG4g6ShCgFK",
 };
 
+// Map categories to their respective books and file IDs
+const categoryToBookMap = {
+  TamilnaduHistory: {
+    bookName: "Tamilnadu History Book",
+    fileId: fileIds.TamilnaduHistory,
+    description: "Published by Tamilnadu Government, covering Indian history"
+  },
+  Spectrum: {
+    bookName: "Spectrum Book",
+    fileId: fileIds.Spectrum,
+    description: "Spectrum book for Modern Indian History"
+  },
+  ArtAndCulture: {
+    bookName: "Nitin Singhania Art and Culture Book",
+    fileId: fileIds.ArtAndCulture,
+    description: "Nitin Singhania book for Indian Art and Culture"
+  },
+  FundamentalGeography: {
+    bookName: "NCERT Class 11th Fundamentals of Physical Geography",
+    fileId: fileIds.FundamentalGeography,
+    description: "NCERT Class 11th book on Fundamental Geography"
+  },
+  IndianGeography: {
+    bookName: "NCERT Class 11th Indian Geography",
+    fileId: fileIds.IndianGeography,
+    description: "NCERT Class 11th book on Indian Geography"
+  },
+  Atlas: {
+    bookName: "Atlas",
+    fileId: fileIds.Atlas,
+    description: "General knowledge or internet-based (file pending)"
+  },
+  Science: {
+    bookName: "Disha IAS Previous Year Papers (Science Section)",
+    fileId: fileIds.Science,
+    description: "Disha IAS book, Science section (Physics, Chemistry, Biology, Science & Technology)"
+  },
+  Environment: {
+    bookName: "Shankar IAS Environment Book",
+    fileId: fileIds.Environment,
+    description: "Shankar IAS book for Environment"
+  },
+  Economy: {
+    bookName: "Ramesh Singh Indian Economy Book",
+    fileId: fileIds.Economy,
+    description: "Ramesh Singh book for Indian Economy"
+  },
+  CSAT: {
+    bookName: "Disha IAS Previous Year Papers (CSAT Section)",
+    fileId: fileIds.CSAT,
+    description: "Disha IAS book, CSAT section"
+  },
+  CurrentAffairs: {
+    bookName: "Vision IAS Current Affairs Magazine",
+    fileId: fileIds.CurrentAffairs,
+    description: "Vision IAS Current Affairs resource"
+  },
+  PreviousYearPaper: {
+    bookName: "Disha IAS Previous Year Papers",
+    fileId: fileIds.PreviousYearPaper,
+    description: "Disha IAS book for Previous Year Papers"
+  },
+  Polity: {
+    bookName: "Laxmikanth Book",
+    fileId: fileIds.Polity,
+    description: "Laxmikanth book for Indian Polity"
+  }
+};
+
 // Store user threads (in-memory for simplicity)
 const userThreads = new Map();
 
@@ -85,6 +154,21 @@ app.post("/ask", async (req, res) => {
     const { query, category, userId } = req.body;
     console.log(`🔹 Received Query from User ${userId}: ${query}`);
 
+    // Validate category
+    if (!categoryToBookMap[category]) {
+      throw new Error(`Invalid category: ${category}. Please provide a valid subject category.`);
+    }
+
+    const bookInfo = categoryToBookMap[category];
+    const fileId = bookInfo.fileId;
+
+    // Check if the file ID is valid for processing
+    if (!fileId || fileId === "pending" || fileId.startsWith("[TBD")) {
+      throw new Error(
+        `File for category ${category} is not available (File ID: ${fileId}). MCQs cannot be generated.`
+      );
+    }
+
     let threadId = userThreads.get(userId);
     if (!threadId) {
       const thread = await openai.beta.threads.create();
@@ -126,34 +210,27 @@ app.post("/ask", async (req, res) => {
     console.log(`🔸 Selected MCQ Structure: ${selectedStructure}`);
 
     const generalInstruction = `
-      You are an AI trained exclusively on UPSC Books.
+      You are an AI trained exclusively on UPSC Books for the TrainWithMe platform.
 
-      📚 Reference Books Available:  
-      - Polity: Laxmikanth book (file ID: ${fileIds.Polity})  
-      - Fundamental Geography: NCERT Class 11th Fundamentals of Physical Geography (file ID: ${fileIds.FundamentalGeography})  
-      - Indian Geography: NCERT Class 11th Indian Geography (file ID: ${fileIds.IndianGeography})  
-      - Tamilnadu History: Tamilnadu History Book (file ID: ${fileIds.TamilnaduHistory})  
-      - Art & Culture: Nitin Singhania book (file ID: ${fileIds.ArtAndCulture})  
-      - Modern History: Spectrum book (file ID: ${fileIds.Spectrum})  
-      - Current Affairs: Vision IAS Current Affairs (file ID: ${fileIds.CurrentAffairs})  
-      - Previous Year Papers: Disha IAS book (file ID: ${fileIds.PreviousYearPaper})  
-      - Science: Disha IAS book (file ID: ${fileIds.Science})  
-      - Environment: Shankar IAS Environment book (file ID: ${fileIds.Environment})  
-      - Economy: Ramesh Singh Indian Economy book (file ID: ${fileIds.Economy})  
-      - CSAT: Disha IAS book (file ID: ${fileIds.CSAT})  
+      📚 Reference Book for This Query:  
+      - Category: ${category}  
+      - Book: ${bookInfo.bookName}  
+      - File ID: ${fileId}  
+      - Description: ${bookInfo.description}  
 
       **General Instructions:**  
-      - Answer ONLY from the requested book and chapter using the attached file.  
+      - Answer ONLY from the specified book (${bookInfo.bookName}) using the attached file (File ID: ${fileId}).  
+      - DO NOT use external sources, general knowledge, or any other files—rely solely on the specified file for the requested category.  
+      - If the requested chapter or content is not found in the specified file, respond with an error message: "Content not found in ${bookInfo.bookName}. Please check the chapter or try a different query."  
       - Make responses engaging with emojis, highlights, and structured formatting.  
       - DO NOT use markdown symbols like #, *, or - in the final response text (convert them to plain text).  
       - If the user asks for MCQs, generate them from the requested book ONLY using the attached file.  
       - Ensure MCQs are difficult (but do not mention this to the user).  
       - If the user asks for notes, provide concise, factual notes (1/3 of chapter length).  
-      - DO NOT use external sources or general knowledge—rely solely on the attached files for the requested book.
 
       **Instructions for MCQ Generation (Applies to All Subjects):**  
-      - For queries requesting an MCQ, generate 1 MCQ from the specified book and chapter (or the entire book if no chapter is specified) using the attached file for the category "${category}".  
-      - The MCQ MUST follow the UPSC-style format specified below. Use the following structure: ${selectedStructure}
+      - For queries requesting an MCQ, generate 1 MCQ from the specified book (${bookInfo.bookName}) and chapter (or the entire book if no chapter is specified) using the attached file (File ID: ${fileId}).  
+      - The MCQ MUST follow the UPSC-style format specified below. Use the following structure: ${selectedStructure}  
 
       **Format 1: Statement-Based (Follow This Structure):**  
       Example:  
@@ -272,7 +349,13 @@ app.post("/ask", async (req, res) => {
       - Use plain text headers ("Question:", "Options:", "Correct Answer:", "Explanation:") without any formatting (e.g., no **, *, or underscores).  
       - For Matching Type and Correctly Matched Pairs questions, format the list as a simple text table with each pair on a new line (e.g., "(A) Item  (1) Match").  
 
-      **Now, generate a response based on the book: "${category}":**  
+      **Special Instructions for Specific Categories:**  
+      - For "Science": Generate MCQs only from the Science section (Physics, Chemistry, Biology, Science & Technology) of the Disha IAS Previous Year Papers book (File ID: ${fileIds.Science}).  
+      - For "CSAT": Generate MCQs only from the CSAT section of the Disha IAS Previous Year Papers book (File ID: ${fileIds.CSAT}).  
+      - For "PreviousYearPaper": Generate MCQs from the entire Disha IAS Previous Year Papers book (File ID: ${fileIds.PreviousYearPaper}), covering all relevant sections.  
+      - For "Atlas": Since the file is pending, respond with an error message: "File for Atlas is not available. MCQs cannot be generated at this time."  
+
+      **Now, generate a response based on the book: "${bookInfo.bookName}" (File ID: ${fileId}):**  
       "${query}"
     `;
 
