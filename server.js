@@ -95,6 +95,24 @@ app.post("/ask", async (req, res) => {
       console.log(`✅ Using Existing Thread for User ${userId}: ${threadId}`);
     }
 
+    // Explicitly select the MCQ structure using random number
+    const structureIndex = Math.floor(Math.random() * 3) + 1; // Random number between 1 and 3
+    let selectedStructure;
+    switch (structureIndex) {
+      case 1:
+        selectedStructure = "Statement-Based";
+        break;
+      case 2:
+        selectedStructure = "Assertion-Reason";
+        break;
+      case 3:
+        selectedStructure = "Matching Type";
+        break;
+      default:
+        selectedStructure = "Statement-Based"; // Fallback
+    }
+    console.log(`🔸 Selected MCQ Structure: ${selectedStructure}`);
+
     const generalInstruction = `
       You are an AI trained exclusively on UPSC Books.
 
@@ -123,10 +141,7 @@ app.post("/ask", async (req, res) => {
 
       **Instructions for MCQ Generation (Specific to Polity Queries):**  
       - For queries related to Polity, generate 1 MCQ from the specified chapter or the entire Laxmikanth Polity Book (file ID: ${fileIds.Polity}) if no chapter is specified.  
-      - The MCQ MUST follow one of the UPSC-style formats listed below (choose randomly between the three formats for each request):  
-        1. Statement-Based (multiple statements, ask how many are correct)  
-        2. Assertion-Reason (A and R statements, evaluate their truth and relationship)  
-        3. Matching Type (match items from two lists, select the correct combination)  
+      - The MCQ MUST follow the UPSC-style format specified below. Use the following structure: ${selectedStructure}
 
       **Format 1: Statement-Based (Follow This Structure):**  
       Example:  
