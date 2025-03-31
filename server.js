@@ -151,8 +151,8 @@ app.post("/ask", async (req, res) => {
       - If the user asks for notes, provide concise, factual notes (1/3 of chapter length).  
       - DO NOT use external sources or general knowledge—rely solely on the attached files for the requested book.
 
-      **Instructions for MCQ Generation (Specific to Polity Queries):**  
-      - For queries related to Polity, generate 1 MCQ from the specified chapter or the entire Laxmikanth Polity Book (file ID: ${fileIds.Polity}) if no chapter is specified.  
+      **Instructions for MCQ Generation (Applies to All Subjects):**  
+      - For queries requesting an MCQ, generate 1 MCQ from the specified book and chapter (or the entire book if no chapter is specified) using the attached file for the category "${category}".  
       - The MCQ MUST follow the UPSC-style format specified below. Use the following structure: ${selectedStructure}
 
       **Format 1: Statement-Based (Follow This Structure):**  
@@ -267,7 +267,7 @@ app.post("/ask", async (req, res) => {
         (d) [Option D]  
         Correct Answer: [Correct option letter, e.g., (a)]  
         Explanation: [Brief explanation, 2-3 sentences, based on the requested book]  
-      - Separate each section with a double line break (\n\n).  
+      - Separate each section with EXACTLY TWO newlines (\n\n).  
       - Start the response directly with "Question:"—do NOT include any introductory text like "UPSC-style MCQ" or "**Question:**".  
       - Use plain text headers ("Question:", "Options:", "Correct Answer:", "Explanation:") without any formatting (e.g., no **, *, or underscores).  
       - For Matching Type and Correctly Matched Pairs questions, format the list as a simple text table with each pair on a new line (e.g., "(A) Item  (1) Match").  
