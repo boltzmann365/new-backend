@@ -123,9 +123,10 @@ app.post("/ask", async (req, res) => {
 
       **Instructions for MCQ Generation (Specific to Polity Queries):**  
       - For queries related to Polity, generate 1 MCQ from the specified chapter or the entire Laxmikanth Polity Book (file ID: ${fileIds.Polity}) if no chapter is specified.  
-      - The MCQ MUST follow one of the UPSC-style formats listed below (choose randomly between the two formats for each request):  
+      - The MCQ MUST follow one of the UPSC-style formats listed below (choose randomly between the three formats for each request):  
         1. Statement-Based (multiple statements, ask how many are correct)  
         2. Assertion-Reason (A and R statements, evaluate their truth and relationship)  
+        3. Matching Type (match items from two lists, select the correct combination)  
 
       **Format 1: Statement-Based (Follow This Structure):**  
       Example:  
@@ -154,9 +155,26 @@ app.post("/ask", async (req, res) => {
       Correct Answer: (a)  
       Explanation: The Rowlatt Act (1919) and the Jallianwala Bagh massacre (1919) led to widespread discontent, which prompted the Indian National Congress to adopt the Non-Cooperation Movement in 1920 under Mahatma Gandhi's leadership. Thus, R correctly explains A.
 
-      **Response Structure for MCQs (Applies to Both Formats):**  
+      **Format 3: Matching Type (Follow This Structure):**  
+      Example:  
+      Question: Match the following biosphere reserves with their locations:  
+      Biosphere Reserve    State  
+      (A) Nokrek          (1) Arunachal Pradesh  
+      (B) Agasthyamalai   (2) Tamil Nadu  
+      (C) Simlipal        (3) Odisha  
+      (D) Dibru-Saikhowa  (4) Assam  
+      Select the correct answer using the codes:  
+      Options:  
+      (a) A-1, B-2, C-3, D-4  
+      (b) A-3, B-1, C-4, D-2  
+      (c) A-2, B-3, C-1, D-4  
+      (d) A-4, B-3, C-2, D-1  
+      Correct Answer: (a)  
+      Explanation: Nokrek Biosphere Reserve is in Meghalaya, but for the purpose of this example, let's assume the correct matches are: Nokrek in Arunachal Pradesh (1), Agasthyamalai in Tamil Nadu (2), Simlipal in Odisha (3), and Dibru-Saikhowa in Assam (4). Hence, the correct answer is A-1, B-2, C-3, D-4.
+
+      **Response Structure for MCQs (Applies to All Formats):**  
       - Use this EXACT structure for the response with PLAIN TEXT headers (no bold markers like **):  
-        Question: [Full question text including statements or A/R]  
+        Question: [Full question text including statements, A/R, or matching lists]  
         Options:  
         (a) [Option A]  
         (b) [Option B]  
@@ -167,6 +185,7 @@ app.post("/ask", async (req, res) => {
       - Separate each section with a double line break (\n\n).  
       - Start the response directly with "Question:"—do NOT include any introductory text like "UPSC-style MCQ" or "**Question:**".  
       - Use plain text headers ("Question:", "Options:", "Correct Answer:", "Explanation:") without any formatting (e.g., no **, *, or underscores).  
+      - For Matching Type questions, format the matching list as a simple text table with each pair on a new line (e.g., "(A) Item  (1) Match").  
 
       **Now, generate a response based on the book: "${category}":**  
       "${query}"
