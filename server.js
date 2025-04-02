@@ -191,6 +191,20 @@ const validateMCQStructure = (responseText, selectedStructure) => {
   }
 };
 
+// Function to wait for a run to complete
+const waitForRunToComplete = async (threadId, runId) => {
+  while (true) {
+    const runStatus = await openai.beta.threads.runs.retrieve(threadId, runId);
+    console.log(`⏳ AI Status: ${runStatus.status}`);
+
+    if (runStatus.status === "completed" || runStatus.status === "failed") {
+      return runStatus.status;
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+};
+
 app.post("/ask", async (req, res) => {
   try {
     const { query, category, userId } = req.body;
@@ -256,8 +270,8 @@ app.post("/ask", async (req, res) => {
     switch (selectedStructure) {
       case "Statement-Based":
         structurePrompt = `
-          Generate the MCQ in the Statement-Based format with numbered statements followed by "How many of the above statements are correct?" or "Which of the statements given above is/are correct?".  
-          Provide options like:  
+          You MUST generate the MCQ in the Statement-Based format with 3 numbered statements followed by "How many of the above statements are correct?"  
+          Provide exactly 4 options:  
           (a) Only one  
           (b) Only two  
           (c) All three  
@@ -279,8 +293,8 @@ app.post("/ask", async (req, res) => {
         break;
       case "Assertion-Reason":
         structurePrompt = `
-          Generate the MCQ in the Assertion-Reason format with two statements labeled "Assertion (A)" and "Reason (R)".  
-          Provide options like:  
+          You MUST generate the MCQ in the Assertion-Reason format with two statements labeled "Assertion (A)" and "Reason (R)".  
+          Provide exactly 4 options:  
           (a) Both A and R are true, and R is the correct explanation of A  
           (b) Both A and R are true, but R is NOT the correct explanation of A  
           (c) A is true, but R is false  
@@ -300,12 +314,14 @@ app.post("/ask", async (req, res) => {
         break;
       case "Matching Type":
         structurePrompt = `
-          Generate the MCQ in the Matching Type format with a table-like structure (e.g., Constitutional Provisions    Emergency Type) where the user must match items from two columns.  
-          Provide options like:  
-          (a) A-2, B-3, C-1  
-          (b) A-1, B-2, C-3  
-          (c) A-2, B-1, C-3  
-          (d) A-3, B-2, C-1  
+          You MUST generate the MCQ in the Matching Type format with a table-like structure where the user must match items from two columns. The table MUST have exactly 4 pairs to match (A to D and 1 to 4). Use multiple spaces (at least 4 spaces) between the two columns to create a table-like appearance.  
+          The question MUST start with "Match the following" and end with "Select the correct answer using the codes:".  
+          Provide exactly 4 options:  
+          (a) A-2, B-1, C-3, D-4  
+          (b) A-1, B-2, C-4, D-3  
+          (c) A-2, B-1, C-4, D-3  
+          (d) A-3, B-2, C-1, D-4  
+          DO NOT generate the MCQ in any other format, such as Statement-Based or Assertion-Reason.  
           Example:  
           Question: Match the following parliamentary committees with their functions:  
           Parliamentary Committee    Function  
@@ -325,12 +341,13 @@ app.post("/ask", async (req, res) => {
         break;
       case "Multiple Statements with Specific Combinations":
         structurePrompt = `
-          Generate the MCQ in the Multiple Statements with Specific Combinations format with numbered statements followed by options specifying combinations.  
-          Provide options like:  
+          You MUST generate the MCQ in the Multiple Statements with Specific Combinations format with 3 numbered statements followed by options specifying combinations.  
+          Provide exactly 4 options:  
           (a) 1 and 2 only  
           (b) 2 and 3 only  
           (c) 1 and 3 only  
           (d) 1, 2, and 3  
+          DO NOT generate the MCQ in any other format, such as Statement-Based with "How many of the above statements are correct?" or Assertion-Reason.  
           Example:  
           Question: With reference to agricultural soils, consider the following statements:  
           1. A high content of organic matter in soil drastically reduces its water-holding capacity.  
@@ -339,7 +356,7 @@ app.post("/ask", async (req, res) => {
           Which of the statements given above is/are correct?  
           Options:  
           (a) 1 and 2 only  
-          (b) 3 only  
+          (b) 2 and 3 only  
           (c) 1 and 3 only  
           (d) 1, 2, and 3  
           Correct Answer: (b)  
@@ -348,12 +365,13 @@ app.post("/ask", async (req, res) => {
         break;
       case "Chronological Order":
         structurePrompt = `
-          Generate the MCQ in the Chronological Order format with a list of events or items to be arranged in chronological order.  
-          Provide options like:  
-          (a) 3, 1, 2  
-          (b) 2, 1, 3  
-          (c) 1, 3, 2  
-          (d) 3, 2, 1  
+          You MUST generate the MCQ in the Chronological Order format with a list of 4 events or items to be arranged in chronological order. The question MUST start with "Arrange the following events in chronological order:".  
+          Provide exactly 4 options:  
+          (a) 1, 2, 3, 4  
+          (b) 2, 1, 3, 4  
+          (c) 1, 3, 2, 4  
+          (d) 3, 2, 1, 4  
+          DO NOT generate the MCQ in any other format, such as Statement-Based or Assertion-Reason.  
           Example:  
           Question: Arrange the following events in chronological order:  
           1. Battle of Plassey  
@@ -362,23 +380,24 @@ app.post("/ask", async (req, res) => {
           4. Treaty of Bassein  
           Select the correct order:  
           Options:  
-          (a) 1-2-3-4  
-          (b) 2-1-3-4  
-          (c) 1-3-2-4  
-          (d) 3-2-1-4  
+          (a) 1, 2, 3, 4  
+          (b) 2, 1, 3, 4  
+          (c) 1, 3, 2, 4  
+          (d) 3, 2, 1, 4  
           Correct Answer: (a)  
-          Explanation: The Battle of Plassey occurred in 1757, the Third Battle of Panipat in 1761, the Regulating Act was passed in 1773, and the Treaty of Bassein was signed in 1802. Thus, the correct chronological order is 1-2-3-4.
+          Explanation: The Battle of Plassey occurred in 1757, the Third Battle of Panipat in 1761, the Regulating Act was passed in 1773, and the Treaty of Bassein was signed in 1802. Thus, the correct chronological order is 1, 2, 3, 4.
         `;
         break;
       case "Correctly Matched Pairs":
         structurePrompt = `
-          Generate the MCQ in the Correctly Matched Pairs format with a list of pairs (e.g., Festival    State) followed by a question asking which pairs are correctly matched.  
-          Provide options like:  
+          You MUST generate the MCQ in the Correctly Matched Pairs format with a list of 3 pairs (e.g., Festival    State) followed by a question asking which pairs are correctly matched. The list MUST be formatted as a table-like structure with multiple spaces (at least 4 spaces) between the two columns. The question MUST start with "Consider the following pairs:".  
+          Provide exactly 4 options:  
           (a) A only  
           (b) A and B only  
           (c) B and C only  
           (d) A, B, and C  
-          Example:  
+          DO NOT generate the MCQ in any other format, such as Statement-Based or Assertion-Reason.
+                    Example:  
           Question: Consider the following pairs:  
           Festival    State  
           (A) Chapchar Kut    Nagaland  
@@ -387,21 +406,22 @@ app.post("/ask", async (req, res) => {
           Which of the pairs are correctly matched?  
           Options:  
           (a) A only  
-          (b) B and C only  
-          (c) A and C only  
+          (b) A and B only  
+          (c) B and C only  
           (d) A, B, and C  
-          Correct Answer: (b)  
+          Correct Answer: (c)  
           Explanation: Chapchar Kut is a festival of Mizoram, not Nagaland, so (A) is incorrect. Wangala is correctly matched with Meghalaya, and Losar is correctly matched with Arunachal Pradesh. Thus, only B and C are correctly matched.
         `;
         break;
       case "Direct Question with Single Correct Answer":
         structurePrompt = `
-          Generate the MCQ in the Direct Question with Single Correct Answer format with a single question and four options, where one is correct.  
-          Provide options like:  
+          You MUST generate the MCQ in the Direct Question with Single Correct Answer format with a single question and four options, where one is correct.  
+          Provide exactly 4 options:  
           (a) [Option A]  
           (b) [Option B]  
           (c) [Option C]  
           (d) [Option D]  
+          DO NOT generate the MCQ in any other format, such as Statement-Based or Assertion-Reason.  
           Example:  
           Question: Which one of the following is a tributary of the Brahmaputra?  
           Options:  
@@ -424,23 +444,15 @@ app.post("/ask", async (req, res) => {
       - File ID: ${fileId}  
       - Description: ${bookInfo.description}  
 
-      **General Instructions:**  
-      - Answer ONLY from the specified book (${bookInfo.bookName}) using the attached file (File ID: ${fileId}).  
-      - DO NOT use external sources, general knowledge, or any other files—rely solely on the specified file for the requested category.  
-      - If the requested chapter or content is not found in the specified file, respond with an error message: "Content not found in ${bookInfo.bookName}. Please check the chapter or try a different query."  
-      - Make responses engaging with emojis, highlights, and structured formatting.  
-      - DO NOT use markdown symbols like #, *, or - in the final response text (convert them to plain text).  
-      - If the user asks for MCQs, generate them from the requested book ONLY using the attached file.  
-      - Ensure MCQs are difficult (but do not mention this to the user).  
-      - If the user asks for notes, provide concise, factual notes (1/3 of chapter length).  
-
-      **Instructions for MCQ Generation (Applies to All Subjects):**  
-      - For queries requesting an MCQ, generate 1 MCQ from the specified book (${bookInfo.bookName}) and chapter (or the entire book if no chapter is specified) using the attached file (File ID: ${fileId}).  
-      - The MCQ MUST follow the UPSC-style format specified below.  
-      - The MCQ MUST be in the following structure: ${selectedStructure}  
+      **Instructions for MCQ Generation:**  
+      - Generate 1 MCQ from the specified book (${bookInfo.bookName}) and chapter (or the entire book if no chapter is specified) using the attached file (File ID: ${fileId}).  
+      - The MCQ MUST be generated in the ${selectedStructure} format as specified below.  
+      - DO NOT generate the MCQ in any other format (e.g., do not use Statement-Based format if the selected structure is Matching Type).  
+      - Ensure the MCQ is difficult but do not mention this in the response.  
       ${structurePrompt}
-           **Response Structure for MCQs (Applies to All Formats):**  
-      - Use this EXACT structure for the response with PLAIN TEXT headers (no bold markers like **):  
+
+      **Response Structure for MCQs:**  
+      - Use this EXACT structure for the response with PLAIN TEXT headers:  
         Question: [Full question text including statements, A/R, matching lists, etc.]  
         Options:  
         (a) [Option A]  
@@ -450,9 +462,9 @@ app.post("/ask", async (req, res) => {
         Correct Answer: [Correct option letter, e.g., (a)]  
         Explanation: [Brief explanation, 2-3 sentences, based on the requested book]  
       - Separate each section with EXACTLY TWO newlines (\n\n).  
-      - Start the response directly with "Question:"—do NOT include any introductory text like "UPSC-style MCQ" or "**Question:**".  
-      - Use plain text headers ("Question:", "Options:", "Correct Answer:", "Explanation:") without any formatting (e.g., no **, *, or underscores).  
-      - For Matching Type and Correctly Matched Pairs questions, format the list as a simple text table with each pair on a new line (e.g., "(A) Item  (1) Match").  
+      - Start the response directly with "Question:"—do NOT include any introductory text.  
+      - Use plain text headers ("Question:", "Options:", "Correct Answer:", "Explanation:") without any formatting.  
+      - For Matching Type and Correctly Matched Pairs questions, format the list as a simple text table with each pair on a new line (e.g., "(A) Item    (1) Match").  
 
       **Special Instructions for Specific Categories:**  
       - For "Science": Generate MCQs only from the Science section (Physics, Chemistry, Biology, Science & Technology) of the Disha IAS Previous Year Papers book (File ID: ${fileIds.Science}).  
@@ -466,9 +478,17 @@ app.post("/ask", async (req, res) => {
 
     let responseText = "";
     let retryCount = 0;
-    const maxRetries = 2;
+    const maxRetries = 3; // Increased to 3 retries
 
     while (retryCount <= maxRetries) {
+      // Check for active runs and wait if necessary
+      const runs = await openai.beta.threads.runs.list(threadId);
+      const activeRun = runs.data.find(run => run.status === "in_progress" || run.status === "queued");
+      if (activeRun) {
+        console.log(`⏳ Waiting for active run ${activeRun.id} to complete...`);
+        await waitForRunToComplete(threadId, activeRun.id);
+      }
+
       await openai.beta.threads.messages.create(threadId, {
         role: "user",
         content: generalInstruction,
@@ -486,23 +506,15 @@ app.post("/ask", async (req, res) => {
       }
       console.log(`🔄 AI is processing query (Run ID: ${run.id})`);
 
-      while (true) {
-        const runStatus = await openai.beta.threads.runs.retrieve(threadId, run.id);
-        console.log(`⏳ AI Status: ${runStatus.status}`);
-
-        if (runStatus.status === "completed") {
-          const messages = await openai.beta.threads.messages.list(threadId);
-          const latestMessage = messages.data.find(m => m.role === "assistant");
-          responseText = latestMessage?.content[0]?.text?.value || "No response available.";
-          break;
-        }
-
-        if (runStatus.status === "failed") {
-          throw new Error("❌ AI request failed.");
-        }
-
-        await new Promise(resolve => setTimeout(resolve, 1000));
+      const runStatus = await waitForRunToComplete(threadId, run.id);
+      if (runStatus === "failed") {
+        throw new Error("❌ AI request failed.");
       }
+
+      const messages = await openai.beta.threads.messages.list(threadId);
+      const latestMessage = messages.data.find(m => m.role === "assistant");
+      responseText = latestMessage?.content[0]?.text?.value || "No response available.";
+      console.log(`📜 AI Response: ${responseText}`);
 
       // Validate the response structure
       const isValidStructure = validateMCQStructure(responseText, selectedStructure);
@@ -512,7 +524,31 @@ app.post("/ask", async (req, res) => {
         console.log(`⚠️ Response does not match ${selectedStructure} structure, retrying (${retryCount + 1}/${maxRetries})...`);
         retryCount++;
         if (retryCount > maxRetries) {
-          throw new Error(`❌ Failed to generate MCQ in ${selectedStructure} format after ${maxRetries} retries.`);
+          console.log(`⚠️ Falling back to Statement-Based structure after ${maxRetries} retries...`);
+          selectedStructure = "Statement-Based";
+          structurePrompt = `
+            You MUST generate the MCQ in the Statement-Based format with 3 numbered statements followed by "How many of the above statements are correct?"  
+            Provide exactly 4 options:  
+            (a) Only one  
+            (b) Only two  
+            (c) All three  
+            (d) None  
+            Example:  
+            Question: Consider the following statements regarding Fundamental Rights:  
+            1. They are absolute and cannot be suspended.  
+            2. They are available only to citizens.  
+            3. The Right to Property is a Fundamental Right.  
+            How many of the above statements are correct?  
+            Options:  
+            (a) Only one  
+            (b) Only two  
+            (c) All three  
+            (d) None  
+            Correct Answer: (d)  
+            Explanation: Fundamental Rights can be suspended during a National Emergency (except Articles 20 and 21), are available to both citizens and foreigners (e.g., Article 14), and the Right to Property is no longer a Fundamental Right due to the 44th Amendment.
+          `;
+          retryCount = 0; // Reset retry count for fallback
+          continue;
         }
       }
     }
