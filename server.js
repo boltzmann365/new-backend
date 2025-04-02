@@ -155,38 +155,51 @@ const validateMCQStructure = (responseText, selectedStructure) => {
   const questionSection = sections.find(section => section.startsWith("Question:"))?.replace("Question: ", "");
   const questionLines = questionSection ? questionSection.split("\n").map(line => line.trim()) : [];
 
+  console.log(`🔍 Validating ${selectedStructure} structure...`);
+  console.log(`Question Lines:`, questionLines);
+
   switch (selectedStructure) {
     case "Statement-Based":
     case "Multiple Statements with Specific Combinations":
-      return (
+      const isStatementBased = (
         questionLines.some(line => /^\d+\./.test(line)) &&
         (questionLines.some(line => line.includes("Which of the statements given above is/are correct?")) ||
          questionLines.some(line => line.includes("How many of the above statements are correct?")))
       );
+      console.log(`Statement-Based validation: ${isStatementBased}`);
+      return isStatementBased;
     case "Assertion-Reason":
-      return (
+      const isAssertionReason = (
         questionLines.some(line => line.startsWith("Assertion (A):")) &&
         questionLines.some(line => line.startsWith("Reason (R):"))
       );
+      console.log(`Assertion-Reason validation: ${isAssertionReason}`);
+      return isAssertionReason;
     case "Matching Type":
     case "Correctly Matched Pairs":
-      return (
-        questionLines.some(line => line.includes("    ")) &&
-        questionLines.some(line => /^\([A-D]\)/.test(line))
-      );
+      // Relax the space requirement to 2 or more spaces and check for table-like structure
+      const hasTableStructure = questionLines.some(line => /\s{2,}/.test(line));
+      const hasMatchingPairs = questionLines.some(line => /^\([A-D]\)/.test(line));
+      console.log(`Matching Type/Correctly Matched Pairs validation - Has table structure: ${hasTableStructure}, Has matching pairs: ${hasMatchingPairs}`);
+      return hasTableStructure && hasMatchingPairs;
     case "Chronological Order":
-      return (
+      const isChronologicalOrder = (
         questionLines.some(line => line.includes("Arrange the following")) &&
         questionLines.some(line => line.includes("chronological order"))
       );
+      console.log(`Chronological Order validation: ${isChronologicalOrder}`);
+      return isChronologicalOrder;
     case "Direct Question with Single Correct Answer":
-      return !(
+      const isDirectQuestion = !(
         questionLines.some(line => /^\d+\./.test(line)) ||
         questionLines.some(line => line.startsWith("Assertion (A):")) ||
         questionLines.some(line => line.includes("    ")) ||
         questionLines.some(line => line.includes("Arrange the following"))
       );
+      console.log(`Direct Question validation: ${isDirectQuestion}`);
+      return isDirectQuestion;
     default:
+      console.log(`Unknown structure: ${selectedStructure}`);
       return false;
   }
 };
@@ -201,7 +214,8 @@ const waitForRunToComplete = async (threadId, runId) => {
       return runStatus.status;
     }
 
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    // Increase polling interval to reduce log frequency
+    await new Promise(resolve => setTimeout(resolve, 2000)); // Poll every 2 seconds instead of 1
   }
 };
 
@@ -314,7 +328,7 @@ app.post("/ask", async (req, res) => {
         break;
       case "Matching Type":
         structurePrompt = `
-          You MUST generate the MCQ in the Matching Type format with a table-like structure where the user must match items from two columns. The table MUST have exactly 4 pairs to match (A to D and 1 to 4). Use multiple spaces (at least 4 spaces) between the two columns to create a table-like appearance.  
+          You MUST generate the MCQ in the Matching Type format with a table-like structure where the user must match items from two columns. The table MUST have exactly 4 pairs to match (A to D and 1 to 4). Use multiple spaces (at least 2 spaces) between the two columns to create a table-like appearance.  
           The question MUST start with "Match the following" and end with "Select the correct answer using the codes:".  
           Provide exactly 4 options:  
           (a) A-2, B-1, C-3, D-4  
@@ -390,14 +404,14 @@ app.post("/ask", async (req, res) => {
         break;
       case "Correctly Matched Pairs":
         structurePrompt = `
-          You MUST generate the MCQ in the Correctly Matched Pairs format with a list of 3 pairs (e.g., Festival    State) followed by a question asking which pairs are correctly matched. The list MUST be formatted as a table-like structure with multiple spaces (at least 4 spaces) between the two columns. The question MUST start with "Consider the following pairs:".  
+                  You MUST generate the MCQ in the Correctly Matched Pairs format with a list of 3 pairs (e.g., Festival    State) followed by a question asking which pairs are correctly matched. The list MUST be formatted as a table-like structure with multiple spaces (at least 2 spaces) between the two columns. The question MUST start with "Consider the following pairs:".  
           Provide exactly 4 options:  
           (a) A only  
           (b) A and B only  
           (c) B and C only  
           (d) A, B, and C  
-          DO NOT generate the MCQ in any other format, such as Statement-Based or Assertion-Reason.
-                    Example:  
+          DO NOT generate the MCQ in any other format, such as Statement-Based or Assertion-Reason.  
+          Example:  
           Question: Consider the following pairs:  
           Festival    State  
           (A) Chapchar Kut    Nagaland  
@@ -478,7 +492,7 @@ app.post("/ask", async (req, res) => {
 
     let responseText = "";
     let retryCount = 0;
-    const maxRetries = 3; // Increased to 3 retries
+    const maxRetries = 2; // Reduced to 2 retries to minimize log accumulation
 
     while (retryCount <= maxRetries) {
       // Check for active runs and wait if necessary
