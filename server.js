@@ -353,6 +353,10 @@ app.post("/ask", async (req, res) => {
         break;
     }
 
+    // Extract the chapter name from the query
+    const chapterMatch = query.match(/Generate 1 MCQ from (.*?) of the Laxmikanth Book/);
+    const chapter = chapterMatch ? chapterMatch[1] : null;
+
     const generalInstruction = `
       You are an AI trained exclusively on UPSC Books for the TrainWithMe platform.
 
@@ -363,10 +367,13 @@ app.post("/ask", async (req, res) => {
       - Description: ${bookInfo.description}  
 
       **Instructions for MCQ Generation:**  
-      - Generate 1 MCQ from the specified book (${bookInfo.bookName}) and chapter (or the entire book if no chapter is specified) using the attached file (File ID: ${fileId}).  
+      - Generate 1 MCQ from the specified book (${bookInfo.bookName}) using the attached file (File ID: ${fileId}).  
+      - If a chapter is specified, you MUST generate the MCQ ONLY from that chapter of the book. Do NOT use content from other chapters or external sources.  
+      - If no chapter is specified, you MUST generate the MCQ from the entire book, but do NOT use content outside of the book.  
       - The MCQ MUST be generated in the ${selectedStructure} format as specified below.  
       - DO NOT generate the MCQ in any other format (e.g., do not use Statement-Based format if the selected structure is Assertion-Reason).  
       - Ensure the MCQ is difficult but do not mention this in the response.  
+      - Do NOT create questions based on your own knowledge or external sources; use ONLY the content from the specified book and chapter (if provided).  
       ${structurePrompt}
 
       **Response Structure for MCQs:**  
@@ -378,7 +385,7 @@ app.post("/ask", async (req, res) => {
         (c) [Option C]  
         (d) [Option D]  
         Correct Answer: [Correct option letter, e.g., (a)]  
-        Explanation: [Brief explanation, 2-3 sentences, based on the requested book]  
+        Explanation: [Brief explanation, 2-3 sentences, based on the requested book and chapter]  
       - Separate each section with EXACTLY TWO newlines (\n\n).  
       - Start the response directly with "Question:"—do NOT include any introductory text.  
       - Use plain text headers ("Question:", "Options:", "Correct Answer:", "Explanation:") without any formatting.  
@@ -388,6 +395,10 @@ app.post("/ask", async (req, res) => {
       - For "CSAT": Generate MCQs only from the CSAT section of the Disha IAS Previous Year Papers book (File ID: ${fileIds.CSAT}).  
       - For "PreviousYearPaper": Generate MCQs from the entire Disha IAS Previous Year Papers book (File ID: ${fileIds.PreviousYearPaper}), covering all relevant sections.  
       - For "Atlas": Since the file is pending, respond with an error message: "File for Atlas is not available. MCQs cannot be generated at this time."  
+
+      **Chapter Constraint:**  
+      - If a chapter is specified, you MUST generate the MCQ ONLY from the chapter "${chapter}" of the Laxmikanth Book. Do NOT use content from other chapters or external sources.  
+      - If no chapter is specified, you MUST generate the MCQ from the entire Laxmikanth Book, but do NOT use content outside of the book.  
 
       **Now, generate a response based on the book: "${bookInfo.bookName}" (File ID: ${fileId}):**  
       "${query}"
