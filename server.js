@@ -173,6 +173,18 @@ const waitForRunToComplete = async (threadId, runId) => {
   }
 };
 
+// Function to wait for all active runs to complete
+const waitForAllActiveRuns = async (threadId) => {
+  let activeRuns = [];
+  do {
+    const runs = await openai.beta.threads.runs.list(threadId);
+    activeRuns = runs.data.filter(run => run.status === "in_progress" || run.status === "queued");
+    for (const activeRun of activeRuns) {
+      await waitForRunToComplete(threadId, activeRun.id);
+    }
+  } while (activeRuns.length > 0); // Continue until no active runs remain
+};
+
 app.post("/ask", async (req, res) => {
   try {
     const { query, category, userId } = req.body;
@@ -196,6 +208,9 @@ app.post("/ask", async (req, res) => {
       threadId = thread.id;
       userThreads.set(userId, threadId);
     }
+
+    // Wait for all active runs to complete before proceeding
+    await waitForAllActiveRuns(threadId);
 
     // Select the MCQ structure (Matching Type and Correctly Matched Pairs removed)
     const structureIndex = Math.floor(Math.random() * 5) + 1; // Random number between 1 and 5
