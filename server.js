@@ -149,80 +149,20 @@ const updateAssistantWithFiles = async () => {
 // Call this function when the server starts
 updateAssistantWithFiles();
 
-// Function to validate the MCQ structure
-const validateMCQStructure = (responseText, selectedStructure) => {
-  const sections = responseText.split(/\n\n/).map(section => section.trim());
-  const questionSection = sections.find(section => section.startsWith("Question:"))?.replace("Question: ", "");
-  const questionLines = questionSection ? questionSection.split("\n").map(line => line.trim()) : [];
-
-  console.log(`🔍 Validating ${selectedStructure} structure...`);
-  console.log(`Question Lines:`, questionLines);
-
-  switch (selectedStructure) {
-    case "Statement-Based":
-    case "Multiple Statements with Specific Combinations":
-      const isStatementBased = (
-        questionLines.some(line => /^\d+\./.test(line)) &&
-        (questionLines.some(line => line.includes("Which of the statements given above is/are correct?")) ||
-         questionLines.some(line => line.includes("How many of the above statements are correct?")))
-      );
-      console.log(`Statement-Based validation: ${isStatementBased}`);
-      return isStatementBased;
-    case "Assertion-Reason":
-      const isAssertionReason = (
-        questionLines.some(line => line.startsWith("Assertion (A):")) &&
-        questionLines.some(line => line.startsWith("Reason (R):"))
-      );
-      console.log(`Assertion-Reason validation: ${isAssertionReason}`);
-      return isAssertionReason;
-    case "Matching Type":
-    case "Correctly Matched Pairs":
-      // Relax the space requirement to 2 or more spaces and check for table-like structure
-      const hasTableStructure = questionLines.some(line => /\s{2,}/.test(line));
-      const hasMatchingPairs = questionLines.some(line => /^\([A-D]\)/.test(line));
-      console.log(`Matching Type/Correctly Matched Pairs validation - Has table structure: ${hasTableStructure}, Has matching pairs: ${hasMatchingPairs}`);
-      return hasTableStructure && hasMatchingPairs;
-    case "Chronological Order":
-      const isChronologicalOrder = (
-        questionLines.some(line => line.includes("Arrange the following")) &&
-        questionLines.some(line => line.includes("chronological order"))
-      );
-      console.log(`Chronological Order validation: ${isChronologicalOrder}`);
-      return isChronologicalOrder;
-    case "Direct Question with Single Correct Answer":
-      const isDirectQuestion = !(
-        questionLines.some(line => /^\d+\./.test(line)) ||
-        questionLines.some(line => line.startsWith("Assertion (A):")) ||
-        questionLines.some(line => line.includes("    ")) ||
-        questionLines.some(line => line.includes("Arrange the following"))
-      );
-      console.log(`Direct Question validation: ${isDirectQuestion}`);
-      return isDirectQuestion;
-    default:
-      console.log(`Unknown structure: ${selectedStructure}`);
-      return false;
-  }
-};
-
 // Function to wait for a run to complete
 const waitForRunToComplete = async (threadId, runId) => {
   while (true) {
     const runStatus = await openai.beta.threads.runs.retrieve(threadId, runId);
-    console.log(`⏳ AI Status: ${runStatus.status}`);
-
     if (runStatus.status === "completed" || runStatus.status === "failed") {
       return runStatus.status;
     }
-
-    // Increase polling interval to reduce log frequency
-    await new Promise(resolve => setTimeout(resolve, 2000)); // Poll every 2 seconds instead of 1
+    await new Promise(resolve => setTimeout(resolve, 2000)); // Poll every 2 seconds
   }
 };
 
 app.post("/ask", async (req, res) => {
   try {
     const { query, category, userId } = req.body;
-    console.log(`🔹 Received Query from User ${userId}: ${query}`);
 
     // Validate category
     if (!categoryToBookMap[category]) {
@@ -234,9 +174,7 @@ app.post("/ask", async (req, res) => {
 
     // Check if the file ID is valid for processing
     if (!fileId || fileId === "pending" || fileId.startsWith("[TBD")) {
-      throw new Error(
-        `File for category ${category} is not available (File ID: ${fileId}). MCQs cannot be generated.`
-      );
+      throw new Error(`File for category ${category} is not available (File ID: ${fileId}). MCQs cannot be generated.`);
     }
 
     let threadId = userThreads.get(userId);
@@ -244,13 +182,10 @@ app.post("/ask", async (req, res) => {
       const thread = await openai.beta.threads.create();
       threadId = thread.id;
       userThreads.set(userId, threadId);
-      console.log(`✅ New Thread Created for User ${userId}: ${threadId}`);
-    } else {
-      console.log(`✅ Using Existing Thread for User ${userId}: ${threadId}`);
     }
 
-    // Explicitly select the MCQ structure using random number
-    const structureIndex = Math.floor(Math.random() * 7) + 1; // Random number between 1 and 7
+    // Select the MCQ structure (Matching Type and Correctly Matched Pairs removed)
+    const structureIndex = Math.floor(Math.random() * 5) + 1; // Random number between 1 and 5
     let selectedStructure;
     switch (structureIndex) {
       case 1:
@@ -260,24 +195,17 @@ app.post("/ask", async (req, res) => {
         selectedStructure = "Assertion-Reason";
         break;
       case 3:
-        selectedStructure = "Matching Type";
-        break;
-      case 4:
         selectedStructure = "Multiple Statements with Specific Combinations";
         break;
-      case 5:
+      case 4:
         selectedStructure = "Chronological Order";
         break;
-      case 6:
-        selectedStructure = "Correctly Matched Pairs";
-        break;
-      case 7:
+      case 5:
         selectedStructure = "Direct Question with Single Correct Answer";
         break;
       default:
         selectedStructure = "Statement-Based"; // Fallback
     }
-    console.log(`🔸 Selected MCQ Structure: ${selectedStructure}`);
 
     // Construct structure-specific prompt
     let structurePrompt = "";
@@ -324,33 +252,6 @@ app.post("/ask", async (req, res) => {
           (d) A is false, but R is true  
           Correct Answer: (a)  
           Explanation: The Rowlatt Act (1919) and the Jallianwala Bagh massacre (1919) led to widespread discontent, which prompted the Indian National Congress to adopt the Non-Cooperation Movement in 1920 under Mahatma Gandhi's leadership. Thus, R correctly explains A.
-        `;
-        break;
-      case "Matching Type":
-        structurePrompt = `
-          You MUST generate the MCQ in the Matching Type format with a table-like structure where the user must match items from two columns. The table MUST have exactly 4 pairs to match (A to D and 1 to 4). Use multiple spaces (at least 2 spaces) between the two columns to create a table-like appearance.  
-          The question MUST start with "Match the following" and end with "Select the correct answer using the codes:".  
-          Provide exactly 4 options:  
-          (a) A-2, B-1, C-3, D-4  
-          (b) A-1, B-2, C-4, D-3  
-          (c) A-2, B-1, C-4, D-3  
-          (d) A-3, B-2, C-1, D-4  
-          DO NOT generate the MCQ in any other format, such as Statement-Based or Assertion-Reason.  
-          Example:  
-          Question: Match the following parliamentary committees with their functions:  
-          Parliamentary Committee    Function  
-          (A) Estimates Committee       (1) Reviews and reports on the accounts of the government  
-          (B) Public Accounts Committee (2) Examines the demands for grants  
-          (C) Committee on Public Undertakings (3) Investigates the working of public sector undertakings  
-          (D) Committee on Delegated Legislation (4) Oversees the rules framed by the government  
-          Select the correct answer using the codes:  
-          Options:  
-          (a) A-2, B-1, C-3, D-4  
-          (b) A-1, B-2, C-4, D-3  
-          (c) A-3, B-2, C-1, D-4  
-          (d) A-4, B-3, C-2, D-1  
-          Correct Answer: (a)  
-          Explanation: The Estimates Committee examines the demands for grants (A-2), the Public Accounts Committee reviews the accounts of the government (B-1), the Committee on Public Undertakings investigates the working of public sector undertakings (C-3), and the Committee on Delegated Legislation oversees the rules framed by the government (D-4).
         `;
         break;
       case "Multiple Statements with Specific Combinations":
@@ -402,31 +303,6 @@ app.post("/ask", async (req, res) => {
           Explanation: The Battle of Plassey occurred in 1757, the Third Battle of Panipat in 1761, the Regulating Act was passed in 1773, and the Treaty of Bassein was signed in 1802. Thus, the correct chronological order is 1, 2, 3, 4.
         `;
         break;
-      case "Correctly Matched Pairs":
-        structurePrompt = `
-                  You MUST generate the MCQ in the Correctly Matched Pairs format with a list of 3 pairs (e.g., Festival    State) followed by a question asking which pairs are correctly matched. The list MUST be formatted as a table-like structure with multiple spaces (at least 2 spaces) between the two columns. The question MUST start with "Consider the following pairs:".  
-          Provide exactly 4 options:  
-          (a) A only  
-          (b) A and B only  
-          (c) B and C only  
-          (d) A, B, and C  
-          DO NOT generate the MCQ in any other format, such as Statement-Based or Assertion-Reason.  
-          Example:  
-          Question: Consider the following pairs:  
-          Festival    State  
-          (A) Chapchar Kut    Nagaland  
-          (B) Wangala    Meghalaya  
-          (C) Losar    Arunachal Pradesh  
-          Which of the pairs are correctly matched?  
-          Options:  
-          (a) A only  
-          (b) A and B only  
-          (c) B and C only  
-          (d) A, B, and C  
-          Correct Answer: (c)  
-          Explanation: Chapchar Kut is a festival of Mizoram, not Nagaland, so (A) is incorrect. Wangala is correctly matched with Meghalaya, and Losar is correctly matched with Arunachal Pradesh. Thus, only B and C are correctly matched.
-        `;
-        break;
       case "Direct Question with Single Correct Answer":
         structurePrompt = `
           You MUST generate the MCQ in the Direct Question with Single Correct Answer format with a single question and four options, where one is correct.  
@@ -461,13 +337,13 @@ app.post("/ask", async (req, res) => {
       **Instructions for MCQ Generation:**  
       - Generate 1 MCQ from the specified book (${bookInfo.bookName}) and chapter (or the entire book if no chapter is specified) using the attached file (File ID: ${fileId}).  
       - The MCQ MUST be generated in the ${selectedStructure} format as specified below.  
-      - DO NOT generate the MCQ in any other format (e.g., do not use Statement-Based format if the selected structure is Matching Type).  
+      - DO NOT generate the MCQ in any other format (e.g., do not use Statement-Based format if the selected structure is Assertion-Reason).  
       - Ensure the MCQ is difficult but do not mention this in the response.  
       ${structurePrompt}
 
       **Response Structure for MCQs:**  
       - Use this EXACT structure for the response with PLAIN TEXT headers:  
-        Question: [Full question text including statements, A/R, matching lists, etc.]  
+        Question: [Full question text including statements, A/R, etc.]  
         Options:  
         (a) [Option A]  
         (b) [Option B]  
@@ -478,7 +354,6 @@ app.post("/ask", async (req, res) => {
       - Separate each section with EXACTLY TWO newlines (\n\n).  
       - Start the response directly with "Question:"—do NOT include any introductory text.  
       - Use plain text headers ("Question:", "Options:", "Correct Answer:", "Explanation:") without any formatting.  
-      - For Matching Type and Correctly Matched Pairs questions, format the list as a simple text table with each pair on a new line (e.g., "(A) Item    (1) Match").  
 
       **Special Instructions for Specific Categories:**  
       - For "Science": Generate MCQs only from the Science section (Physics, Chemistry, Biology, Science & Technology) of the Disha IAS Previous Year Papers book (File ID: ${fileIds.Science}).  
@@ -490,90 +365,42 @@ app.post("/ask", async (req, res) => {
       "${query}"
     `;
 
-    let responseText = "";
-    let retryCount = 0;
-    const maxRetries = 2; // Reduced to 2 retries to minimize log accumulation
-
-    while (retryCount <= maxRetries) {
-      // Check for active runs and wait if necessary
-      const runs = await openai.beta.threads.runs.list(threadId);
-      const activeRun = runs.data.find(run => run.status === "in_progress" || run.status === "queued");
-      if (activeRun) {
-        console.log(`⏳ Waiting for active run ${activeRun.id} to complete...`);
-        await waitForRunToComplete(threadId, activeRun.id);
-      }
-
-      await openai.beta.threads.messages.create(threadId, {
-        role: "user",
-        content: generalInstruction,
-      });
-
-      console.log("✅ Query Sent to AI");
-
-      const run = await openai.beta.threads.runs.create(threadId, {
-        assistant_id: assistantId,
-        tools: [{ type: "file_search" }],
-      });
-
-      if (!run || !run.id) {
-        throw new Error("❌ Failed to create AI Run. Check OpenAI request.");
-      }
-      console.log(`🔄 AI is processing query (Run ID: ${run.id})`);
-
-      const runStatus = await waitForRunToComplete(threadId, run.id);
-      if (runStatus === "failed") {
-        throw new Error("❌ AI request failed.");
-      }
-
-      const messages = await openai.beta.threads.messages.list(threadId);
-      const latestMessage = messages.data.find(m => m.role === "assistant");
-      responseText = latestMessage?.content[0]?.text?.value || "No response available.";
-      console.log(`📜 AI Response: ${responseText}`);
-
-      // Validate the response structure
-      const isValidStructure = validateMCQStructure(responseText, selectedStructure);
-      if (isValidStructure) {
-        break; // Response matches the selected structure, proceed
-      } else {
-        console.log(`⚠️ Response does not match ${selectedStructure} structure, retrying (${retryCount + 1}/${maxRetries})...`);
-        retryCount++;
-        if (retryCount > maxRetries) {
-          console.log(`⚠️ Falling back to Statement-Based structure after ${maxRetries} retries...`);
-          selectedStructure = "Statement-Based";
-          structurePrompt = `
-            You MUST generate the MCQ in the Statement-Based format with 3 numbered statements followed by "How many of the above statements are correct?"  
-            Provide exactly 4 options:  
-            (a) Only one  
-            (b) Only two  
-            (c) All three  
-            (d) None  
-            Example:  
-            Question: Consider the following statements regarding Fundamental Rights:  
-            1. They are absolute and cannot be suspended.  
-            2. They are available only to citizens.  
-            3. The Right to Property is a Fundamental Right.  
-            How many of the above statements are correct?  
-            Options:  
-            (a) Only one  
-            (b) Only two  
-            (c) All three  
-            (d) None  
-            Correct Answer: (d)  
-            Explanation: Fundamental Rights can be suspended during a National Emergency (except Articles 20 and 21), are available to both citizens and foreigners (e.g., Article 14), and the Right to Property is no longer a Fundamental Right due to the 44th Amendment.
-          `;
-          retryCount = 0; // Reset retry count for fallback
-          continue;
-        }
-      }
+    // Check for active runs and wait if necessary
+    const runs = await openai.beta.threads.runs.list(threadId);
+    const activeRun = runs.data.find(run => run.status === "in_progress" || run.status === "queued");
+    if (activeRun) {
+      await waitForRunToComplete(threadId, activeRun.id);
     }
 
+    await openai.beta.threads.messages.create(threadId, {
+      role: "user",
+      content: generalInstruction,
+    });
+
+    const run = await openai.beta.threads.runs.create(threadId, {
+      assistant_id: assistantId,
+      tools: [{ type: "file_search" }],
+    });
+
+    if (!run || !run.id) {
+      throw new Error("Failed to create AI Run. Check OpenAI request.");
+    }
+
+    const runStatus = await waitForRunToComplete(threadId, run.id);
+    if (runStatus === "failed") {
+      throw new Error("AI request failed.");
+    }
+
+    const messages = await openai.beta.threads.messages.list(threadId);
+    const latestMessage = messages.data.find(m => m.role === "assistant");
+    const responseText = latestMessage?.content[0]?.text?.value || "No response available.";
+
     res.json({ answer: responseText });
-    console.log("✅ AI Response Sent!");
   } catch (error) {
-    console.error("❌ Error from OpenAI:", error);
+    console.error("Error from OpenAI:", error.message);
     res.status(500).json({ error: "AI service error", details: error.message });
   }
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, "0.0.0.0", () => console.log(`✅ Backend running on port ${PORT}`));
+app.listen(PORT, "0.0.0.0", () => console.log(`Backend running on port ${PORT}`));
