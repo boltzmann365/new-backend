@@ -5,7 +5,20 @@ const OpenAI = require("openai");
 
 dotenv.config();
 const app = express();
-app.use(cors({ origin: ["https://trainwithme.in", "http://localhost:3000"] }));
+
+// Updated CORS configuration to handle preflight requests and allow necessary headers
+app.use(
+  cors({
+    origin: ["https://trainwithme.in", "http://localhost:3000"],
+    methods: ["GET", "POST", "OPTIONS"], // Explicitly allow methods
+    allowedHeaders: ["Content-Type", "Authorization"], // Allow necessary headers
+    credentials: true, // Allow credentials if needed
+  })
+);
+
+// Handle preflight OPTIONS requests explicitly
+app.options("*", cors()); // Respond to all OPTIONS requests with CORS headers
+
 app.use(express.json());
 
 // OpenAI API Setup
