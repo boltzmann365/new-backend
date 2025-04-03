@@ -399,6 +399,7 @@ app.post("/ask", async (req, res) => {
       **Chapter Constraint:**  
       - If a chapter is specified, you MUST generate the MCQ ONLY from the chapter "${chapter}" of the Laxmikanth Book. Do NOT use content from other chapters or external sources.  
       - If no chapter is specified, you MUST generate the MCQ from the entire Laxmikanth Book, but do NOT use content outside of the book.  
+      - If you cannot find relevant content in the specified chapter to generate the MCQ, return an error message: "Unable to generate MCQ from the specified chapter '${chapter}' of the Laxmikanth Book. Please try a different chapter or the entire book."
 
       **Now, generate a response based on the book: "${bookInfo.bookName}" (File ID: ${fileId}):**  
       "${query}"
