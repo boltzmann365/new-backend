@@ -200,6 +200,7 @@ const waitForAllActiveRuns = async (threadId) => {
 };
 
 app.post("/ask", async (req, res) => {
+  let responseText = "No response available."; // Define responseText with a default value
   try {
     const { query, category, userId } = req.body;
 
@@ -455,7 +456,7 @@ app.post("/ask", async (req, res) => {
 
       const messages = await openai.beta.threads.messages.list(threadId);
       const latestMessage = messages.data.find(m => m.role === "assistant");
-      const responseText = latestMessage?.content[0]?.text?.value || "No response available.";
+      responseText = latestMessage?.content[0]?.text?.value || "No response available.";
 
       // Log the AI's response for debugging
       console.log(`AI Response for userId ${userId}, chapter ${chapter}: ${responseText}`);
