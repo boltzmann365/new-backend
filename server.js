@@ -231,147 +231,6 @@ app.post("/ask", async (req, res) => {
       // Wait for all active runs to complete before proceeding
       await waitForAllActiveRuns(threadId);
 
-      // Select the MCQ structure (Matching Type and Correctly Matched Pairs removed)
-      const structureIndex = Math.floor(Math.random() * 5) + 1; // Random number between 1 and 5
-      let selectedStructure;
-      switch (structureIndex) {
-        case 1:
-          selectedStructure = "Statement-Based";
-          break;
-        case 2:
-          selectedStructure = "Assertion-Reason";
-          break;
-        case 3:
-          selectedStructure = "Multiple Statements with Specific Combinations";
-          break;
-        case 4:
-          selectedStructure = "Chronological Order";
-          break;
-        case 5:
-          selectedStructure = "Direct Question with Single Correct Answer";
-          break;
-        default:
-          selectedStructure = "Statement-Based"; // Fallback
-      }
-
-      // Construct structure-specific prompt
-      let structurePrompt = "";
-      switch (selectedStructure) {
-        case "Statement-Based":
-          structurePrompt = `
-            You MUST generate the MCQ in the Statement-Based format with 3 numbered statements followed by "How many of the above statements are correct?"  
-            Provide exactly 4 options:  
-            (a) Only one  
-            (b) Only two  
-            (c) All three  
-            (d) None  
-            Example:  
-            Question: Consider the following statements regarding Fundamental Rights:  
-            1. They are absolute and cannot be suspended.  
-            2. They are available only to citizens.  
-            3. The Right to Property is a Fundamental Right.  
-            How many of the above statements are correct?  
-            Options:  
-            (a) Only one  
-            (b) Only two  
-            (c) All three  
-            (d) None  
-            Correct Answer: (d)  
-            Explanation: Fundamental Rights can be suspended during a National Emergency (except Articles 20 and 21), are available to both citizens and foreigners (e.g., Article 14), and the Right to Property is no longer a Fundamental Right due to the 44th Amendment.
-          `;
-          break;
-        case "Assertion-Reason":
-          structurePrompt = `
-            You MUST generate the MCQ in the Assertion-Reason format with two statements labeled "Assertion (A)" and "Reason (R)".  
-            Provide exactly 4 options:  
-            (a) Both A and R are true, and R is the correct explanation of A  
-            (b) Both A and R are true, but R is NOT the correct explanation of A  
-            (c) A is true, but R is false  
-            (d) A is false, but R is true  
-            Example:  
-            Question:  
-            Assertion (A): The Indian National Congress adopted the policy of non-cooperation in 1920.  
-            Reason (R): The Rowlatt Act and Jallianwala Bagh massacre created widespread discontent.  
-            Options:  
-            (a) Both A and R are true, and R is the correct explanation of A  
-            (b) Both A and R are true, but R is NOT the correct explanation of A  
-            (c) A is true, but R is false  
-            (d) A is false, but R is true  
-            Correct Answer: (a)  
-            Explanation: The Rowlatt Act (1919) and the Jallianwala Bagh massacre (1919) led to widespread discontent, which prompted the Indian National Congress to adopt the Non-Cooperation Movement in 1920 under Mahatma Gandhi's leadership. Thus, R correctly explains A.
-          `;
-          break;
-        case "Multiple Statements with Specific Combinations":
-          structurePrompt = `
-            You MUST generate the MCQ in the Multiple Statements with Specific Combinations format with 3 numbered statements followed by options specifying combinations.  
-            Provide exactly 4 options:  
-            (a) 1 and 2 only  
-            (b) 2 and 3 only  
-            (c) 1 and 3 only  
-            (d) 1, 2, and 3  
-            DO NOT generate the MCQ in any other format, such as Statement-Based with "How many of the above statements are correct?" or Assertion-Reason.  
-            Example:  
-            Question: With reference to agricultural soils, consider the following statements:  
-            1. A high content of organic matter in soil drastically reduces its water-holding capacity.  
-            2. Soil does not play any role in the nitrogen cycle.  
-            3. Irrigation over a long period of time can contribute to soil salinity.  
-            Which of the statements given above is/are correct?  
-            Options:  
-            (a) 1 and 2 only  
-            (b) 2 and 3 only  
-            (c) 1 and 3 only  
-            (d) 1, 2, and 3  
-            Correct Answer: (b)  
-            Explanation: Statement 1 is incorrect because a high content of organic matter increases the water-holding capacity of soil. Statement 2 is incorrect as soil plays a significant role in the nitrogen cycle through processes like nitrogen fixation. Statement 3 is correct because long-term irrigation can lead to soil salinity due to the accumulation of salts.
-          `;
-          break;
-        case "Chronological Order":
-          structurePrompt = `
-            You MUST generate the MCQ in the Chronological Order format with a list of 4 events or items to be arranged in chronological order. The question MUST start with "Arrange the following events in chronological order:".  
-            Provide exactly 4 options:  
-            (a) 1, 2, 3, 4  
-            (b) 2, 1, 3, 4  
-            (c) 1, 3, 2, 4  
-            (d) 3, 2, 1, 4  
-            DO NOT generate the MCQ in any other format, such as Statement-Based or Assertion-Reason.  
-            Example:  
-            Question: Arrange the following events in chronological order:  
-            1. Battle of Plassey  
-            2. Third Battle of Panipat  
-            3. Regulating Act of 1773  
-            4. Treaty of Bassein  
-            Select the correct order:  
-            Options:  
-            (a) 1, 2, 3, 4  
-            (b) 2, 1, 3, 4  
-            (c) 1, 3, 2, 4  
-            (d) 3, 2, 1, 4  
-            Correct Answer: (a)  
-            Explanation: The Battle of Plassey occurred in 1757, the Third Battle of Panipat in 1761, the Regulating Act was passed in 1773, and the Treaty of Bassein was signed in 1802. Thus, the correct chronological order is 1, 2, 3, 4.
-          `;
-          break;
-        case "Direct Question with Single Correct Answer":
-          structurePrompt = `
-            You MUST generate the MCQ in the Direct Question with Single Correct Answer format with a single question and four options, where one is correct.  
-            Provide exactly 4 options:  
-            (a) [Option A]  
-            (b) [Option B]  
-            (c) [Option C]  
-            (d) [Option D]  
-            DO NOT generate the MCQ in any other format, such as Statement-Based or Assertion-Reason.  
-            Example:  
-            Question: Which one of the following is a tributary of the Brahmaputra?  
-            Options:  
-            (a) Gandak  
-            (b) Kosi  
-            (c) Subansiri  
-            (d) Yamuna  
-            Correct Answer: (c)  
-            Explanation: The Subansiri is a major tributary of the Brahmaputra, joining it in Assam. The Gandak and Kosi are tributaries of the Ganga, and the Yamuna is a tributary of the Ganga as well.
-          `;
-          break;
-      }
-
       // Extract the chapter name from the query
       const chapterMatch = query.match(/Generate 1 MCQ from (.*?) of the Laxmikanth Book/);
       const chapter = chapterMatch ? chapterMatch[1] : null;
@@ -393,11 +252,80 @@ app.post("/ask", async (req, res) => {
         - You MUST use ONLY the content from the attached file (File ID: ${fileId}) to generate the MCQ. Do NOT use your general knowledge, external sources, or any other data outside of the specified file.  
         - If a chapter is specified, you MUST generate the MCQ ONLY from that chapter of the book. Do NOT use content from other chapters or external sources.  
         - If no chapter is specified, you MUST generate the MCQ from the entire book, but do NOT use content outside of the book.  
-        - The MCQ MUST be generated in the ${selectedStructure} format as specified below.  
-        - DO NOT generate the MCQ in any other format (e.g., do not use Statement-Based format if the selected structure is Assertion-Reason).  
+        - The MCQ MUST be generated in one of the following 5 structures. Choose the structure that best fits the content of the chapter to ensure the MCQ is meaningful and relevant. Do NOT force a structure that does not suit the chapter's content.  
         - Ensure the MCQ is difficult but do not mention this in the response.  
-        - If you cannot find relevant content in the specified chapter or book to generate the MCQ, return an error message: "Unable to generate MCQ from the specified chapter '${chapter}' of the ${bookInfo.bookName}. Please try a different chapter or the entire book."  
-        ${structurePrompt}
+        - If you cannot find relevant content in the specified chapter or book to generate the MCQ in any of the 5 structures, return an error message: "Unable to generate MCQ from the specified chapter '${chapter}' of the ${bookInfo.bookName}. Please try a different chapter or the entire book."  
+
+        **Available MCQ Structures (Choose the most suitable one):**  
+        1. **Statement-Based**: Generate the MCQ with 3 numbered statements followed by "How many of the above statements are correct?" Provide exactly 4 options: (a) Only one, (b) Only two, (c) All three, (d) None.  
+           Example:  
+           Question: Consider the following statements regarding Fundamental Rights:  
+           1. They are absolute and cannot be suspended.  
+           2. They are available only to citizens.  
+           3. The Right to Property is a Fundamental Right.  
+           How many of the above statements are correct?  
+           Options:  
+           (a) Only one  
+           (b) Only two  
+           (c) All three  
+           (d) None  
+           Correct Answer: (d)  
+           Explanation: Fundamental Rights can be suspended during a National Emergency (except Articles 20 and 21), are available to both citizens and foreigners (e.g., Article 14), and the Right to Property is no longer a Fundamental Right due to the 44th Amendment.
+
+        2. **Assertion-Reason**: Generate the MCQ with two statements labeled "Assertion (A)" and "Reason (R)". Provide exactly 4 options: (a) Both A and R are true, and R is the correct explanation of A, (b) Both A and R are true, but R is NOT the correct explanation of A, (c) A is true, but R is false, (d) A is false, but R is true.  
+           Example:  
+           Question:  
+           Assertion (A): The Indian National Congress adopted the policy of non-cooperation in 1920.  
+           Reason (R): The Rowlatt Act and Jallianwala Bagh massacre created widespread discontent.  
+           Options:  
+           (a) Both A and R are true, and R is the correct explanation of A  
+           (b) Both A and R are true, but R is NOT the correct explanation of A  
+           (c) A is true, but R is false  
+           (d) A is false, but R is true  
+           Correct Answer: (a)  
+           Explanation: The Rowlatt Act (1919) and the Jallianwala Bagh massacre (1919) led to widespread discontent, which prompted the Indian National Congress to adopt the Non-Cooperation Movement in 1920 under Mahatma Gandhi's leadership. Thus, R correctly explains A.
+
+        3. **Multiple Statements with Specific Combinations**: Generate the MCQ with 3 numbered statements followed by options specifying combinations. Provide exactly 4 options: (a) 1 and 2 only, (b) 2 and 3 only, (c) 1 and 3 only, (d) 1, 2, and 3.  
+           Example:  
+           Question: With reference to agricultural soils, consider the following statements:  
+           1. A high content of organic matter in soil drastically reduces its water-holding capacity.  
+           2. Soil does not play any role in the nitrogen cycle.  
+           3. Irrigation over a long period of time can contribute to soil salinity.  
+           Which of the statements given above is/are correct?  
+           Options:  
+           (a) 1 and 2 only  
+           (b) 2 and 3 only  
+           (c) 1 and 3 only  
+           (d) 1, 2, and 3  
+           Correct Answer: (b)  
+           Explanation: Statement 1 is incorrect because a high content of organic matter increases the water-holding capacity of soil. Statement 2 is incorrect as soil plays a significant role in the nitrogen cycle through processes like nitrogen fixation. Statement 3 is correct because long-term irrigation can lead to soil salinity due to the accumulation of salts.
+
+        4. **Chronological Order**: Generate the MCQ with a list of 4 events or items to be arranged in chronological order. The question MUST start with "Arrange the following events in chronological order:". Provide exactly 4 options: (a) 1, 2, 3, 4, (b) 2, 1, 3, 4, (c) 1, 3, 2, 4, (d) 3, 2, 1, 4.  
+           Example:  
+           Question: Arrange the following events in chronological order:  
+           1. Battle of Plassey  
+           2. Third Battle of Panipat  
+           3. Regulating Act of 1773  
+           4. Treaty of Bassein  
+           Select the correct order:  
+           Options:  
+           (a) 1, 2, 3, 4  
+           (b) 2, 1, 3, 4  
+           (c) 1, 3, 2, 4  
+           (d) 3, 2, 1, 4  
+           Correct Answer: (a)  
+           Explanation: The Battle of Plassey occurred in 1757, the Third Battle of Panipat in 1761, the Regulating Act was passed in 1773, and the Treaty of Bassein was signed in 1802. Thus, the correct chronological order is 1, 2, 3, 4.
+
+        5. **Direct Question with Single Correct Answer**: Generate the MCQ with a single question and four options, where one is correct. Provide exactly 4 options: (a) [Option A], (b) [Option B], (c) [Option C], (d) [Option D].  
+           Example:  
+           Question: Which one of the following is a tributary of the Brahmaputra?  
+           Options:  
+           (a) Gandak  
+           (b) Kosi  
+           (c) Subansiri  
+           (d) Yamuna  
+           Correct Answer: (c)  
+           Explanation: The Subansiri is a major tributary of the Brahmaputra, joining it in Assam. The Gandak and Kosi are tributaries of the Ganga, and the Yamuna is a tributary of the Ganga as well.
 
         **Response Structure for MCQs:**  
         - Use this EXACT structure for the response with PLAIN TEXT headers:  
@@ -422,7 +350,7 @@ app.post("/ask", async (req, res) => {
         **Chapter Constraint:**  
         - If a chapter is specified, you MUST generate the MCQ ONLY from the chapter "${chapter}" of the ${bookInfo.bookName}. Do NOT use content from other chapters or external sources.  
         - If no chapter is specified, you MUST generate the MCQ from the entire ${bookInfo.bookName}, but do NOT use content outside of the book.  
-        - If you cannot find relevant content in the specified chapter or book to generate the MCQ, return an error message: "Unable to generate MCQ from the specified chapter '${chapter}' of the ${bookInfo.bookName}. Please try a different chapter or the entire book."  
+        - If you cannot find relevant content in the specified chapter or book to generate the MCQ in any of the 5 structures, return an error message: "Unable to generate MCQ from the specified chapter '${chapter}' of the ${bookInfo.bookName}. Please try a different chapter or the entire book."  
 
         **Now, generate a response based on the book: "${bookInfo.bookName}" (File ID: ${fileId}):**  
         "${query}"
@@ -460,6 +388,19 @@ app.post("/ask", async (req, res) => {
 
       // Log the AI's response for debugging
       console.log(`AI Response for userId ${userId}, chapter ${chapter}: ${responseText}`);
+
+      // Log the structure used in the response
+      if (responseText.includes("How many of the above statements are correct?")) {
+        console.log(`Structure used for userId ${userId}, chapter ${chapter}: Statement-Based`);
+      } else if (responseText.includes("Assertion (A)")) {
+        console.log(`Structure used for userId ${userId}, chapter ${chapter}: Assertion-Reason`);
+      } else if (responseText.includes("Which of the statements given above is/are correct?") && !responseText.includes("How many of the above statements are correct?")) {
+        console.log(`Structure used for userId ${userId}, chapter ${chapter}: Multiple Statements with Specific Combinations`);
+      } else if (responseText.includes("Arrange the following events in chronological order:")) {
+        console.log(`Structure used for userId ${userId}, chapter ${chapter}: Chronological Order`);
+      } else {
+        console.log(`Structure used for userId ${userId}, chapter ${chapter}: Direct Question with Single Correct Answer`);
+      }
     } finally {
       // Release the lock after processing
       releaseLock(threadId);
