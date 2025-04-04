@@ -368,12 +368,13 @@ app.post("/ask", async (req, res) => {
 
       **Instructions for MCQ Generation:**  
       - Generate 1 MCQ from the specified book (${bookInfo.bookName}) using the attached file (File ID: ${fileId}).  
+      - You MUST use ONLY the content from the attached file (File ID: ${fileId}) to generate the MCQ. Do NOT use your general knowledge, external sources, or any other data outside of the specified file.  
       - If a chapter is specified, you MUST generate the MCQ ONLY from that chapter of the book. Do NOT use content from other chapters or external sources.  
       - If no chapter is specified, you MUST generate the MCQ from the entire book, but do NOT use content outside of the book.  
       - The MCQ MUST be generated in the ${selectedStructure} format as specified below.  
       - DO NOT generate the MCQ in any other format (e.g., do not use Statement-Based format if the selected structure is Assertion-Reason).  
       - Ensure the MCQ is difficult but do not mention this in the response.  
-      - Do NOT create questions based on your own knowledge or external sources; use ONLY the content from the specified book and chapter (if provided).  
+      - If you cannot find relevant content in the specified chapter or book to generate the MCQ, return an error message: "Unable to generate MCQ from the specified chapter '${chapter}' of the ${bookInfo.bookName}. Please try a different chapter or the entire book."  
       ${structurePrompt}
 
       **Response Structure for MCQs:**  
@@ -397,9 +398,9 @@ app.post("/ask", async (req, res) => {
       - For "Atlas": Since the file is pending, respond with an error message: "File for Atlas is not available. MCQs cannot be generated at this time."  
 
       **Chapter Constraint:**  
-      - If a chapter is specified, you MUST generate the MCQ ONLY from the chapter "${chapter}" of the Laxmikanth Book. Do NOT use content from other chapters or external sources.  
-      - If no chapter is specified, you MUST generate the MCQ from the entire Laxmikanth Book, but do NOT use content outside of the book.  
-      - If you cannot find relevant content in the specified chapter to generate the MCQ, return an error message: "Unable to generate MCQ from the specified chapter '${chapter}' of the Laxmikanth Book. Please try a different chapter or the entire book."
+      - If a chapter is specified, you MUST generate the MCQ ONLY from the chapter "${chapter}" of the ${bookInfo.bookName}. Do NOT use content from other chapters or external sources.  
+      - If no chapter is specified, you MUST generate the MCQ from the entire ${bookInfo.bookName}, but do NOT use content outside of the book.  
+      - If you cannot find relevant content in the specified chapter or book to generate the MCQ, return an error message: "Unable to generate MCQ from the specified chapter '${chapter}' of the ${bookInfo.bookName}. Please try a different chapter or the entire book."  
 
       **Now, generate a response based on the book: "${bookInfo.bookName}" (File ID: ${fileId}):**  
       "${query}"
@@ -434,6 +435,9 @@ app.post("/ask", async (req, res) => {
     const messages = await openai.beta.threads.messages.list(threadId);
     const latestMessage = messages.data.find(m => m.role === "assistant");
     const responseText = latestMessage?.content[0]?.text?.value || "No response available.";
+
+    // Log the AI's response for debugging
+    console.log(`AI Response for userId ${userId}, chapter ${chapter}: ${responseText}`);
 
     res.json({ answer: responseText });
   } catch (error) {
