@@ -10,14 +10,14 @@ const app = express();
 app.use(
   cors({
     origin: ["https://trainwithme.in", "http://localhost:3000"],
-    methods: ["GET", "POST", "OPTIONS"], // Explicitly allow methods
-    allowedHeaders: ["Content-Type", "Authorization"], // Allow necessary headers
-    credentials: true, // Allow credentials if needed
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
   })
 );
 
 // Handle preflight OPTIONS requests explicitly
-app.options("*", cors()); // Respond to all OPTIONS requests with CORS headers
+app.options("*", cors());
 
 app.use(express.json());
 
@@ -123,9 +123,12 @@ const userThreads = new Map();
 // Thread lock to prevent concurrent requests on the same thread
 const threadLocks = new Map();
 
+// Track the number of questions generated per user session
+const questionCounts = new Map();
+
 const acquireLock = async (threadId) => {
   while (threadLocks.get(threadId)) {
-    await new Promise(resolve => setTimeout(resolve, 100)); // Wait 100ms before retrying
+    await new Promise(resolve => setTimeout(resolve, 100));
   }
   threadLocks.set(threadId, true);
 };
@@ -183,7 +186,7 @@ const waitForRunToComplete = async (threadId, runId) => {
     if (runStatus.status === "completed" || runStatus.status === "failed") {
       return runStatus.status;
     }
-    await new Promise(resolve => setTimeout(resolve, 2000)); // Poll every 2 seconds
+    await new Promise(resolve => setTimeout(resolve, 2000));
   }
 };
 
@@ -196,11 +199,11 @@ const waitForAllActiveRuns = async (threadId) => {
     for (const activeRun of activeRuns) {
       await waitForRunToComplete(threadId, activeRun.id);
     }
-  } while (activeRuns.length > 0); // Continue until no active runs remain
+  } while (activeRuns.length > 0);
 };
 
 app.post("/ask", async (req, res) => {
-  let responseText = "No response available."; // Define responseText with a default value
+  let responseText = "No response available.";
   try {
     const { query, category, userId } = req.body;
 
@@ -235,11 +238,25 @@ app.post("/ask", async (req, res) => {
       const chapterMatch = query.match(/Generate 1 MCQ from (.*?) of the Laxmikanth Book/);
       const chapter = chapterMatch ? chapterMatch[1] : null;
 
-      // Log the chapter being requested
-      console.log(`Received request for userId ${userId}, chapter: ${chapter}`);
+      // Extract the question index from the userId (format: userId-index)
+      const userIdParts = userId.split('-');
+      const questionIndex = userIdParts.length > 1 ? parseInt(userIdParts[userIdParts.length - 1], 10) : 0;
+
+      // Track the number of questions generated for this user session
+      const baseUserId = userIdParts.slice(0, -1).join('-');
+      const questionCountKey = `${baseUserId}:${chapter || 'entire-book'}`;
+      let questionCount = questionCounts.get(questionCountKey) || 0;
+      questionCount++;
+      questionCounts.set(questionCountKey, questionCount);
+
+      // Log the chapter and question count
+      console.log(`Received request for userId ${userId}, chapter: ${chapter}, question count: ${questionCount}`);
+
+      // Define the threshold for when to allow related questions
+      const chapterContentThreshold = 20; // After 20 questions, allow related questions
 
       const generalInstruction = `
-        You are an AI trained exclusively on UPSC Books for the TrainWithMe platform.
+        You are an AI trained exclusively on UPSC Books for the TrainWithMe platform, but you can use your general knowledge when explicitly allowed.
 
         📚 Reference Book for This Query:  
         - Category: ${category}  
@@ -249,12 +266,12 @@ app.post("/ask", async (req, res) => {
 
         **Instructions for MCQ Generation:**  
         - Generate 1 MCQ from the specified book (${bookInfo.bookName}) using the attached file (File ID: ${fileId}).  
-        - You MUST use ONLY the content from the attached file (File ID: ${fileId}) to generate the MCQ. Do NOT use your general knowledge, external sources, or any other data outside of the specified file.  
-        - If a chapter is specified, you MUST generate the MCQ ONLY from that chapter of the book. Do NOT use content from other chapters or external sources.  
-        - If no chapter is specified, you MUST generate the MCQ from the entire book, but do NOT use content outside of the book.  
-        - The MCQ MUST be generated in one of the following 5 structures. Choose the structure that best fits the content of the chapter to ensure the MCQ is meaningful and relevant. Do NOT force a structure that does not suit the chapter's content.  
+        - If a chapter is specified, you MUST prioritize generating the MCQ from the content of that chapter ("${chapter}") of the book. Use ONLY the content from the specified chapter for the first ${chapterContentThreshold} questions in the user session.  
+        - After generating ${chapterContentThreshold} questions (this is question number ${questionCount} in the session), if you cannot find new, non-repetitive content in the specified chapter, you MAY use your general knowledge to generate an MCQ that is conceptually related to the chapter's topic. Ensure the related MCQ is relevant to the chapter's subject matter (e.g., for "Supreme Court," generate questions about judicial review, landmark cases, or constitutional provisions related to the judiciary).  
+        - If no chapter is specified, generate the MCQ from the entire book, but do NOT use content outside of the book unless explicitly allowed.  
+        - The MCQ MUST be generated in one of the following 5 structures. Choose the structure that best fits the content to ensure the MCQ is meaningful and relevant. Do NOT force a structure that does not suit the content.  
         - Ensure the MCQ is difficult but do not mention this in the response.  
-        - If you cannot find relevant content in the specified chapter or book to generate the MCQ in any of the 5 structures, return an error message: "Unable to generate MCQ from the specified chapter '${chapter}' of the ${bookInfo.bookName}. Please try a different chapter or the entire book."  
+        - If you cannot generate a relevant MCQ (either from the chapter or related to the chapter's topic) in any of the 5 structures, return an error message: "Unable to generate a relevant MCQ for '${chapter}' of the ${bookInfo.bookName}. Please try a different chapter or the entire book."  
 
         **Available MCQ Structures (Choose the most suitable one):**  
         1. **Statement-Based**: Generate the MCQ with 3 numbered statements followed by "How many of the above statements are correct?" Provide exactly 4 options: (a) Only one, (b) Only two, (c) All three, (d) None.  
@@ -336,7 +353,7 @@ app.post("/ask", async (req, res) => {
           (c) [Option C]  
           (d) [Option D]  
           Correct Answer: [Correct option letter, e.g., (a)]  
-          Explanation: [Brief explanation, 2-3 sentences, based on the requested book and chapter]  
+          Explanation: [Brief explanation, 2-3 sentences, based on the requested book and chapter or related knowledge]  
         - Separate each section with EXACTLY TWO newlines (\n\n).  
         - Start the response directly with "Question:"—do NOT include any introductory text.  
         - Use plain text headers ("Question:", "Options:", "Correct Answer:", "Explanation:") without any formatting.  
@@ -348,20 +365,13 @@ app.post("/ask", async (req, res) => {
         - For "Atlas": Since the file is pending, respond with an error message: "File for Atlas is not available. MCQs cannot be generated at this time."  
 
         **Chapter Constraint:**  
-        - If a chapter is specified, you MUST generate the MCQ ONLY from the chapter "${chapter}" of the ${bookInfo.bookName}. Do NOT use content from other chapters or external sources.  
-        - If no chapter is specified, you MUST generate the MCQ from the entire ${bookInfo.bookName}, but do NOT use content outside of the book.  
-        - If you cannot find relevant content in the specified chapter or book to generate the MCQ in any of the 5 structures, return an error message: "Unable to generate MCQ from the specified chapter '${chapter}' of the ${bookInfo.bookName}. Please try a different chapter or the entire book."  
+        - For the first ${chapterContentThreshold} questions, you MUST generate the MCQ ONLY from the chapter "${chapter}" of the ${bookInfo.bookName}. Do NOT use content from other chapters or external sources.  
+        - After ${chapterContentThreshold} questions, if you cannot find new content in the chapter, you MAY generate an MCQ related to the chapter's topic using your general knowledge, ensuring relevance to the chapter's subject matter.  
+        - If no chapter is specified, generate the MCQ from the entire ${bookInfo.bookName}, but do NOT use content outside of the book unless explicitly allowed.  
 
         **Now, generate a response based on the book: "${bookInfo.bookName}" (File ID: ${fileId}):**  
         "${query}"
       `;
-
-      // Check for active runs and wait if necessary
-      const runs = await openai.beta.threads.runs.list(threadId);
-      const activeRun = runs.data.find(run => run.status === "in_progress" || run.status === "queued");
-      if (activeRun) {
-        await waitForRunToComplete(threadId, activeRun.id);
-      }
 
       await openai.beta.threads.messages.create(threadId, {
         role: "user",
