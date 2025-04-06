@@ -120,11 +120,14 @@ const categoryToBookMap = {
 // Store user threads (in-memory for simplicity)
 const userThreads = new Map();
 
-// Thread lock to prevent concurrent requests on the same thread
-const threadLocks = new Map();
-
 // Track the number of questions generated per user session
 const questionCounts = new Map();
+
+// Track MCQ structures used per user session and chapter
+const structureUsage = new Map();
+
+// Thread lock to prevent concurrent requests on the same thread
+const threadLocks = new Map();
 
 const acquireLock = async (threadId) => {
   while (threadLocks.get(threadId)) {
@@ -249,14 +252,21 @@ app.post("/ask", async (req, res) => {
       questionCount++;
       questionCounts.set(questionCountKey, questionCount);
 
+      // Track structure usage for this session and chapter
+      const structureKey = `${baseUserId}:${chapter || 'entire-book'}`;
+      let usedStructures = structureUsage.get(structureKey) || {
+        "Statement-Based": 0,
+        "Assertion-Reason": 0,
+        "Multiple Statements": 0,
+        "Chronological Order": 0,
+        "Direct Question": 0,
+      };
+
       // Log the chapter and question count
       console.log(`Received request for userId ${userId}, chapter: ${chapter}, question count: ${questionCount}`);
 
-      // Define the threshold for when to allow related questions
-      const chapterContentThreshold = 20; // After 20 questions, allow related questions
-
       const generalInstruction = `
-        You are an AI trained exclusively on UPSC Books for the TrainWithMe platform, but you can use your general knowledge when explicitly allowed.
+        You are an AI trained on UPSC Books for the TrainWithMe platform, with access to both uploaded book content and your general knowledge/internet resources.
 
         📚 Reference Book for This Query:  
         - Category: ${category}  
@@ -265,15 +275,28 @@ app.post("/ask", async (req, res) => {
         - Description: ${bookInfo.description}  
 
         **Instructions for MCQ Generation:**  
-        - Generate 1 MCQ from the specified book (${bookInfo.bookName}) using the attached file (File ID: ${fileId}).  
-        - If a chapter is specified, you MUST prioritize generating the MCQ from the content of that chapter ("${chapter}") of the book. Use ONLY the content from the specified chapter for the first ${chapterContentThreshold} questions in the user session.  
-        - After generating ${chapterContentThreshold} questions (this is question number ${questionCount} in the session), if you cannot find new, non-repetitive content in the specified chapter, you MAY use your general knowledge to generate an MCQ that is conceptually related to the chapter's topic. Ensure the related MCQ is relevant to the chapter's subject matter (e.g., for "Supreme Court," generate questions about judicial review, landmark cases, or constitutional provisions related to the judiciary).  
-        - If no chapter is specified, generate the MCQ from the entire book, but do NOT use content outside of the book unless explicitly allowed.  
-        - The MCQ MUST be generated in one of the following 5 structures. Choose the structure that best fits the content to ensure the MCQ is meaningful and relevant. Do NOT force a structure that does not suit the content.  
+        - Generate 1 MCQ related to the specified chapter ("${chapter}") of the book (${bookInfo.bookName}) using a hybrid approach:  
+          - **Primary Source**: Use the content from the specified chapter in the attached file (File ID: ${fileId}) as the main basis for the MCQ.  
+          - **Supplementary Source**: Enhance the MCQ with your general knowledge and internet resources to ensure uniqueness, relevance, and depth, while staying closely tied to the chapter’s topic.  
+        - If no chapter is specified, generate the MCQ from the entire book using the same hybrid approach (file content + general knowledge).  
+        - The MCQ MUST be generated in one of the following 5 structures. **Choose the structure that best fits the content and maximizes variety based on previous usage (see below). Do NOT overuse any single structure.**  
         - Ensure the MCQ is difficult but do not mention this in the response.  
-        - If you cannot generate a relevant MCQ (either from the chapter or related to the chapter's topic) in any of the 5 structures, return an error message: "Unable to generate a relevant MCQ for '${chapter}' of the ${bookInfo.bookName}. Please try a different chapter or the entire book."  
+        - Do NOT repeat statements, topics, or questions from previous MCQs in this session. Use the hybrid approach (chapter content + general knowledge/internet) to continuously generate unique and diverse MCQs.  
 
-        **Available MCQ Structures (Choose the most suitable one):**  
+        **Previous Structure Usage in This Session:**  
+        - Statement-Based: ${usedStructures["Statement-Based"]} times  
+        - Assertion-Reason: ${usedStructures["Assertion-Reason"]} times  
+        - Multiple Statements with Specific Combinations: ${usedStructures["Multiple Statements"]} times  
+        - Chronological Order: ${usedStructures["Chronological Order"]} times  
+        - Direct Question with Single Correct Answer: ${usedStructures["Direct Question"]} times  
+
+        **Structure Selection Guidance:**  
+        - Prioritize variety by selecting a structure that has been used the least in this session (based on the counts above).  
+        - If multiple structures have the same low usage count, choose the one most suitable for the content of "${chapter || 'the entire book'}".  
+        - For example, use "Chronological Order" for historical timelines, "Assertion-Reason" for cause-effect relationships, "Multiple Statements" for comparative analysis, or "Direct Question" for straightforward facts.  
+        - Blend chapter content with general knowledge to create a unique and relevant MCQ, ensuring the question remains tied to the chapter’s subject matter (e.g., for "Supreme Court," include judicial review or landmark cases).  
+
+        **Available MCQ Structures (Choose the most suitable one based on variety and content):**  
         1. **Statement-Based**: Generate the MCQ with 3 numbered statements followed by "How many of the above statements are correct?" Provide exactly 4 options: (a) Only one, (b) Only two, (c) All three, (d) None.  
            Example:  
            Question: Consider the following statements regarding Fundamental Rights:  
@@ -353,21 +376,20 @@ app.post("/ask", async (req, res) => {
           (c) [Option C]  
           (d) [Option D]  
           Correct Answer: [Correct option letter, e.g., (a)]  
-          Explanation: [Brief explanation, 2-3 sentences, based on the requested book and chapter or related knowledge]  
+          Explanation: [Brief explanation, 2-3 sentences, based on the chapter and supplemented by general knowledge]  
         - Separate each section with EXACTLY TWO newlines (\n\n).  
         - Start the response directly with "Question:"—do NOT include any introductory text.  
         - Use plain text headers ("Question:", "Options:", "Correct Answer:", "Explanation:") without any formatting.  
 
         **Special Instructions for Specific Categories:**  
-        - For "Science": Generate MCQs only from the Science section (Physics, Chemistry, Biology, Science & Technology) of the Disha IAS Previous Year Papers book (File ID: ${fileIds.Science}).  
-        - For "CSAT": Generate MCQs only from the CSAT section of the Disha IAS Previous Year Papers book (File ID: ${fileIds.CSAT}).  
-        - For "PreviousYearPaper": Generate MCQs from the entire Disha IAS Previous Year Papers book (File ID: ${fileIds.PreviousYearPaper}), covering all relevant sections.  
+        - For "Science": Generate MCQs only from the Science section (Physics, Chemistry, Biology, Science & Technology) of the Disha IAS Previous Year Papers book (File ID: ${fileIds.Science}), supplemented by general knowledge.  
+        - For "CSAT": Generate MCQs only from the CSAT section of the Disha IAS Previous Year Papers book (File ID: ${fileIds.CSAT}), supplemented by general knowledge.  
+        - For "PreviousYearPaper": Generate MCQs from the entire Disha IAS Previous Year Papers book (File ID: ${fileIds.PreviousYearPaper}), supplemented by general knowledge.  
         - For "Atlas": Since the file is pending, respond with an error message: "File for Atlas is not available. MCQs cannot be generated at this time."  
 
-        **Chapter Constraint:**  
-        - For the first ${chapterContentThreshold} questions, you MUST generate the MCQ ONLY from the chapter "${chapter}" of the ${bookInfo.bookName}. Do NOT use content from other chapters or external sources.  
-        - After ${chapterContentThreshold} questions, if you cannot find new content in the chapter, you MAY generate an MCQ related to the chapter's topic using your general knowledge, ensuring relevance to the chapter's subject matter.  
-        - If no chapter is specified, generate the MCQ from the entire ${bookInfo.bookName}, but do NOT use content outside of the book unless explicitly allowed.  
+        **Hybrid Approach:**  
+        - For every MCQ, combine content from the chapter "${chapter}" of the ${bookInfo.bookName} (File ID: ${fileId}) with your general knowledge and internet resources to ensure a unique, relevant, and engaging question.  
+        - Ensure the MCQ remains closely tied to the chapter’s subject matter, using the book as the primary source and external knowledge to enhance depth or variety, while avoiding repetition of previous MCQs.  
 
         **Now, generate a response based on the book: "${bookInfo.bookName}" (File ID: ${fileId}):**  
         "${query}"
@@ -399,18 +421,24 @@ app.post("/ask", async (req, res) => {
       // Log the AI's response for debugging
       console.log(`AI Response for userId ${userId}, chapter ${chapter}: ${responseText}`);
 
-      // Log the structure used in the response
+      // Update structure usage based on the response
+      let structureUsed = "Unknown";
       if (responseText.includes("How many of the above statements are correct?")) {
-        console.log(`Structure used for userId ${userId}, chapter ${chapter}: Statement-Based`);
+        structureUsed = "Statement-Based";
       } else if (responseText.includes("Assertion (A)")) {
-        console.log(`Structure used for userId ${userId}, chapter ${chapter}: Assertion-Reason`);
+        structureUsed = "Assertion-Reason";
       } else if (responseText.includes("Which of the statements given above is/are correct?") && !responseText.includes("How many of the above statements are correct?")) {
-        console.log(`Structure used for userId ${userId}, chapter ${chapter}: Multiple Statements with Specific Combinations`);
+        structureUsed = "Multiple Statements";
       } else if (responseText.includes("Arrange the following events in chronological order:")) {
-        console.log(`Structure used for userId ${userId}, chapter ${chapter}: Chronological Order`);
-      } else {
-        console.log(`Structure used for userId ${userId}, chapter ${chapter}: Direct Question with Single Correct Answer`);
+        structureUsed = "Chronological Order";
+      } else if (responseText.includes("Question:")) {
+        structureUsed = "Direct Question";
       }
+      usedStructures[structureUsed]++;
+      structureUsage.set(structureKey, usedStructures);
+
+      // Log the structure used in the response
+      console.log(`Structure used for userId ${userId}, chapter ${chapter}: ${structureUsed}`);
     } finally {
       // Release the lock after processing
       releaseLock(threadId);
@@ -422,7 +450,6 @@ app.post("/ask", async (req, res) => {
     res.status(500).json({ error: "AI service error", details: error.message });
   }
 });
-
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, "0.0.0.0", () => console.log(`Backend running on port ${PORT}`));
