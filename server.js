@@ -123,9 +123,6 @@ const userThreads = new Map();
 // Track the number of questions generated per user session
 const questionCounts = new Map();
 
-// Track MCQ structures used per user session and chapter
-const structureUsage = new Map();
-
 // Thread lock to prevent concurrent requests on the same thread
 const threadLocks = new Map();
 
@@ -252,16 +249,6 @@ app.post("/ask", async (req, res) => {
       questionCount++;
       questionCounts.set(questionCountKey, questionCount);
 
-      // Track structure usage for this session and chapter
-      const structureKey = `${baseUserId}:${chapter || 'entire-book'}`;
-      let usedStructures = structureUsage.get(structureKey) || {
-        "Statement-Based": 0,
-        "Assertion-Reason": 0,
-        "Multiple Statements": 0,
-        "Chronological Order": 0,
-        "Direct Question": 0,
-      };
-
       // Log the chapter and question count
       console.log(`Received request for userId ${userId}, chapter: ${chapter}, question count: ${questionCount}`);
 
@@ -279,97 +266,25 @@ app.post("/ask", async (req, res) => {
           - **Primary Source**: Use the content from the specified chapter in the attached file (File ID: ${fileId}) as the main basis for the MCQ.  
           - **Supplementary Source**: Enhance the MCQ with your general knowledge and internet resources to ensure uniqueness, relevance, and depth, while staying closely tied to the chapter’s topic.  
         - If no chapter is specified, generate the MCQ from the entire book using the same hybrid approach (file content + general knowledge).  
-        - The MCQ MUST be generated in one of the following 5 structures. **Choose the structure that best fits the content and maximizes variety based on previous usage (see below). Do NOT overuse any single structure.**  
+        - The MCQ MUST be generated in the "Direct Question with Single Correct Answer" structure, as described below.  
         - Ensure the MCQ is difficult but do not mention this in the response.  
         - Do NOT repeat statements, topics, or questions from previous MCQs in this session. Use the hybrid approach (chapter content + general knowledge/internet) to continuously generate unique and diverse MCQs.  
 
-        **Previous Structure Usage in This Session:**  
-        - Statement-Based: ${usedStructures["Statement-Based"]} times  
-        - Assertion-Reason: ${usedStructures["Assertion-Reason"]} times  
-        - Multiple Statements with Specific Combinations: ${usedStructures["Multiple Statements"]} times  
-        - Chronological Order: ${usedStructures["Chronological Order"]} times  
-        - Direct Question with Single Correct Answer: ${usedStructures["Direct Question"]} times  
-
-        **Structure Selection Guidance:**  
-        - Prioritize variety by selecting a structure that has been used the least in this session (based on the counts above).  
-        - If multiple structures have the same low usage count, choose the one most suitable for the content of "${chapter || 'the entire book'}".  
-        - For example, use "Chronological Order" for historical timelines, "Assertion-Reason" for cause-effect relationships, "Multiple Statements" for comparative analysis, or "Direct Question" for straightforward facts.  
-        - Blend chapter content with general knowledge to create a unique and relevant MCQ, ensuring the question remains tied to the chapter’s subject matter (e.g., for "Supreme Court," include judicial review or landmark cases).  
-
-        **Available MCQ Structures (Choose the most suitable one based on variety and content):**  
-        1. **Statement-Based**: Generate the MCQ with 3 numbered statements followed by "How many of the above statements are correct?" Provide exactly 4 options: (a) Only one, (b) Only two, (c) All three, (d) None.  
-           Example:  
-           Question: Consider the following statements regarding Fundamental Rights:  
-           1. They are absolute and cannot be suspended.  
-           2. They are available only to citizens.  
-           3. The Right to Property is a Fundamental Right.  
-           How many of the above statements are correct?  
-           Options:  
-           (a) Only one  
-           (b) Only two  
-           (c) All three  
-           (d) None  
-           Correct Answer: (d)  
-           Explanation: Fundamental Rights can be suspended during a National Emergency (except Articles 20 and 21), are available to both citizens and foreigners (e.g., Article 14), and the Right to Property is no longer a Fundamental Right due to the 44th Amendment.
-
-        2. **Assertion-Reason**: Generate the MCQ with two statements labeled "Assertion (A)" and "Reason (R)". Provide exactly 4 options: (a) Both A and R are true, and R is the correct explanation of A, (b) Both A and R are true, but R is NOT the correct explanation of A, (c) A is true, but R is false, (d) A is false, but R is true.  
-           Example:  
-           Question:  
-           Assertion (A): The Indian National Congress adopted the policy of non-cooperation in 1920.  
-           Reason (R): The Rowlatt Act and Jallianwala Bagh massacre created widespread discontent.  
-           Options:  
-           (a) Both A and R are true, and R is the correct explanation of A  
-           (b) Both A and R are true, but R is NOT the correct explanation of A  
-           (c) A is true, but R is false  
-           (d) A is false, but R is true  
-           Correct Answer: (a)  
-           Explanation: The Rowlatt Act (1919) and the Jallianwala Bagh massacre (1919) led to widespread discontent, which prompted the Indian National Congress to adopt the Non-Cooperation Movement in 1920 under Mahatma Gandhi's leadership. Thus, R correctly explains A.
-
-        3. **Multiple Statements with Specific Combinations**: Generate the MCQ with 3 numbered statements followed by options specifying combinations. Provide exactly 4 options: (a) 1 and 2 only, (b) 2 and 3 only, (c) 1 and 3 only, (d) 1, 2, and 3.  
-           Example:  
-           Question: With reference to agricultural soils, consider the following statements:  
-           1. A high content of organic matter in soil drastically reduces its water-holding capacity.  
-           2. Soil does not play any role in the nitrogen cycle.  
-           3. Irrigation over a long period of time can contribute to soil salinity.  
-           Which of the statements given above is/are correct?  
-           Options:  
-           (a) 1 and 2 only  
-           (b) 2 and 3 only  
-           (c) 1 and 3 only  
-           (d) 1, 2, and 3  
-           Correct Answer: (b)  
-           Explanation: Statement 1 is incorrect because a high content of organic matter increases the water-holding capacity of soil. Statement 2 is incorrect as soil plays a significant role in the nitrogen cycle through processes like nitrogen fixation. Statement 3 is correct because long-term irrigation can lead to soil salinity due to the accumulation of salts.
-
-        4. **Chronological Order**: Generate the MCQ with a list of 4 events or items to be arranged in chronological order. The question MUST start with "Arrange the following events in chronological order:". Provide exactly 4 options: (a) 1, 2, 3, 4, (b) 2, 1, 3, 4, (c) 1, 3, 2, 4, (d) 3, 2, 1, 4.  
-           Example:  
-           Question: Arrange the following events in chronological order:  
-           1. Battle of Plassey  
-           2. Third Battle of Panipat  
-           3. Regulating Act of 1773  
-           4. Treaty of Bassein  
-           Select the correct order:  
-           Options:  
-           (a) 1, 2, 3, 4  
-           (b) 2, 1, 3, 4  
-           (c) 1, 3, 2, 4  
-           (d) 3, 2, 1, 4  
-           Correct Answer: (a)  
-           Explanation: The Battle of Plassey occurred in 1757, the Third Battle of Panipat in 1761, the Regulating Act was passed in 1773, and the Treaty of Bassein was signed in 1802. Thus, the correct chronological order is 1, 2, 3, 4.
-
-        5. **Direct Question with Single Correct Answer**: Generate the MCQ with a single question and four options, where one is correct. Provide exactly 4 options: (a) [Option A], (b) [Option B], (c) [Option C], (d) [Option D].  
-           Example:  
-           Question: Which one of the following is a tributary of the Brahmaputra?  
-           Options:  
-           (a) Gandak  
-           (b) Kosi  
-           (c) Subansiri  
-           (d) Yamuna  
-           Correct Answer: (c)  
-           Explanation: The Subansiri is a major tributary of the Brahmaputra, joining it in Assam. The Gandak and Kosi are tributaries of the Ganga, and the Yamuna is a tributary of the Ganga as well.
+        **MCQ Structure:**  
+        - **Direct Question with Single Correct Answer**: Generate the MCQ with a single question and four options, where one is correct. Provide exactly 4 options: (a) [Option A], (b) [Option B], (c) [Option C], (d) [Option D].  
+          Example:  
+          Question: Which one of the following is a tributary of the Brahmaputra?  
+          Options:  
+          (a) Gandak  
+          (b) Kosi  
+          (c) Subansiri  
+          (d) Yamuna  
+          Correct Answer: (c)  
+          Explanation: The Subansiri is a major tributary of the Brahmaputra, joining it in Assam. The Gandak and Kosi are tributaries of the Ganga, and the Yamuna is a tributary of the Ganga as well.
 
         **Response Structure for MCQs:**  
         - Use this EXACT structure for the response with PLAIN TEXT headers:  
-          Question: [Full question text including statements, A/R, etc.]  
+          Question: [Full question text]  
           Options:  
           (a) [Option A]  
           (b) [Option B]  
@@ -420,25 +335,8 @@ app.post("/ask", async (req, res) => {
 
       // Log the AI's response for debugging
       console.log(`AI Response for userId ${userId}, chapter ${chapter}: ${responseText}`);
+      console.log(`Structure used for userId ${userId}, chapter ${chapter}: Direct Question`);
 
-      // Update structure usage based on the response
-      let structureUsed = "Unknown";
-      if (responseText.includes("How many of the above statements are correct?")) {
-        structureUsed = "Statement-Based";
-      } else if (responseText.includes("Assertion (A)")) {
-        structureUsed = "Assertion-Reason";
-      } else if (responseText.includes("Which of the statements given above is/are correct?") && !responseText.includes("How many of the above statements are correct?")) {
-        structureUsed = "Multiple Statements";
-      } else if (responseText.includes("Arrange the following events in chronological order:")) {
-        structureUsed = "Chronological Order";
-      } else if (responseText.includes("Question:")) {
-        structureUsed = "Direct Question";
-      }
-      usedStructures[structureUsed]++;
-      structureUsage.set(structureKey, usedStructures);
-
-      // Log the structure used in the response
-      console.log(`Structure used for userId ${userId}, chapter ${chapter}: ${structureUsed}`);
     } finally {
       // Release the lock after processing
       releaseLock(threadId);
