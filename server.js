@@ -48,72 +48,85 @@ const fileIds = {
   Polity: "file-G15UzpuvCRuMG4g6ShCgFK",
 };
 
-// Map categories to their respective books and file IDs
+// Map categories to their respective books and file IDs, including previous year paper references
 const categoryToBookMap = {
   TamilnaduHistory: {
     bookName: "Tamilnadu History Book",
     fileId: fileIds.TamilnaduHistory,
-    description: "Published by Tamilnadu Government, covering Indian history"
+    description: "Published by Tamilnadu Government, covering Indian history",
+    previousYearFileId: fileIds.PreviousYearPaper, // History section
   },
   Spectrum: {
     bookName: "Spectrum Book",
     fileId: fileIds.Spectrum,
-    description: "Spectrum book for Modern Indian History"
+    description: "Spectrum book for Modern Indian History",
+    previousYearFileId: fileIds.PreviousYearPaper, // History section
   },
   ArtAndCulture: {
     bookName: "Nitin Singhania Art and Culture Book",
     fileId: fileIds.ArtAndCulture,
-    description: "Nitin Singhania book for Indian Art and Culture"
+    description: "Nitin Singhania book for Indian Art and Culture",
+    previousYearFileId: fileIds.PreviousYearPaper, // Art & Culture section
   },
   FundamentalGeography: {
     bookName: "NCERT Class 11th Fundamentals of Physical Geography",
     fileId: fileIds.FundamentalGeography,
-    description: "NCERT Class 11th book on Fundamental Geography"
+    description: "NCERT Class 11th book on Fundamental Geography",
+    previousYearFileId: fileIds.PreviousYearPaper, // Geography section
   },
   IndianGeography: {
     bookName: "NCERT Class 11th Indian Geography",
     fileId: fileIds.IndianGeography,
-    description: "NCERT Class 11th book on Indian Geography"
+    description: "NCERT Class 11th book on Indian Geography",
+    previousYearFileId: fileIds.PreviousYearPaper, // Geography section
   },
   Atlas: {
     bookName: "Atlas",
     fileId: fileIds.Atlas,
-    description: "General knowledge or internet-based (file pending)"
+    description: "General knowledge or internet-based (file pending)",
+    previousYearFileId: fileIds.PreviousYearPaper, // General section
   },
   Science: {
     bookName: "Disha IAS Previous Year Papers (Science Section)",
     fileId: fileIds.Science,
-    description: "Disha IAS book, Science section (Physics, Chemistry, Biology, Science & Technology)"
+    description: "Disha IAS book, Science section (Physics, Chemistry, Biology, Science & Technology)",
+    previousYearFileId: fileIds.Science, // Science section
   },
   Environment: {
     bookName: "Shankar IAS Environment Book",
     fileId: fileIds.Environment,
-    description: "Shankar IAS book for Environment"
+    description: "Shankar IAS book for Environment",
+    previousYearFileId: fileIds.PreviousYearPaper, // Environment section
   },
   Economy: {
     bookName: "Ramesh Singh Indian Economy Book",
     fileId: fileIds.Economy,
-    description: "Ramesh Singh book for Indian Economy"
+    description: "Ramesh Singh book for Indian Economy",
+    previousYearFileId: fileIds.PreviousYearPaper, // Economy section
   },
   CSAT: {
     bookName: "Disha IAS Previous Year Papers (CSAT Section)",
     fileId: fileIds.CSAT,
-    description: "Disha IAS book, CSAT section"
+    description: "Disha IAS book, CSAT section",
+    previousYearFileId: fileIds.CSAT, // CSAT section
   },
   CurrentAffairs: {
     bookName: "Vision IAS Current Affairs Magazine",
     fileId: fileIds.CurrentAffairs,
-    description: "Vision IAS Current Affairs resource"
+    description: "Vision IAS Current Affairs resource",
+    previousYearFileId: fileIds.PreviousYearPaper, // Current Affairs section
   },
   PreviousYearPaper: {
     bookName: "Disha IAS Previous Year Papers",
     fileId: fileIds.PreviousYearPaper,
-    description: "Disha IAS book for Previous Year Papers"
+    description: "Disha IAS book for Previous Year Papers",
+    previousYearFileId: fileIds.PreviousYearPaper, // Entire book
   },
   Polity: {
     bookName: "Laxmikanth Book",
     fileId: fileIds.Polity,
-    description: "Laxmikanth book for Indian Polity"
+    description: "Laxmikanth book for Indian Polity",
+    previousYearFileId: fileIds.PreviousYearPaper, // Polity section
   }
 };
 
@@ -214,10 +227,14 @@ app.post("/ask", async (req, res) => {
 
     const bookInfo = categoryToBookMap[category];
     const fileId = bookInfo.fileId;
+    const previousYearFileId = bookInfo.previousYearFileId;
 
-    // Check if the file ID is valid for processing
+    // Check if the file IDs are valid
     if (!fileId || fileId === "pending" || fileId.startsWith("[TBD")) {
       throw new Error(`File for category ${category} is not available (File ID: ${fileId}). MCQs cannot be generated.`);
+    }
+    if (!previousYearFileId || previousYearFileId === "pending" || previousYearFileId.startsWith("[TBD")) {
+      throw new Error(`Previous year paper file for category ${category} is not available (File ID: ${previousYearFileId}). MCQs cannot be generated.`);
     }
 
     let threadId = userThreads.get(userId);
@@ -261,30 +278,26 @@ app.post("/ask", async (req, res) => {
         - File ID: ${fileId}  
         - Description: ${bookInfo.description}  
 
+        📚 UPSC Previous Year Paper Reference:  
+        - Book: Disha IAS Previous Year Papers  
+        - File ID: ${previousYearFileId}  
+        - Description: Used to analyze the structure of UPSC-style MCQs for the ${category} section  
+
         **Instructions for MCQ Generation:**  
         - Generate 1 MCQ related to the specified chapter ("${chapter}") of the book (${bookInfo.bookName}) using a hybrid approach:  
           - **Primary Source**: Use the content from the specified chapter in the attached file (File ID: ${fileId}) as the main basis for the MCQ.  
           - **Supplementary Source**: Enhance the MCQ with your general knowledge and internet resources to ensure uniqueness, relevance, and depth, while staying closely tied to the chapter’s topic.  
-        - If no chapter is specified, generate the MCQ from the entire book using the same hybrid approach (file content + general knowledge).  
-        - The MCQ MUST be generated in the "Direct Question with Single Correct Answer" structure, as described below.  
-        - Ensure the MCQ is difficult but do not mention this in the response.  
-        - Do NOT repeat statements, topics, or questions from previous MCQs in this session. Use the hybrid approach (chapter content + general knowledge/internet) to continuously generate unique and diverse MCQs.  
+        - If no chapter is specified, generate the MCQ from the entire book using the same hybrid approach.  
+        - **UPSC Style Mimicry**:  
+          - Analyze the structure of MCQs from the ${category} section of the Disha IAS Previous Year Papers (File ID: ${previousYearFileId}).  
+          - Mimic the style, complexity, and phrasing of those UPSC questions (e.g., analytical questions, multiple statements, or tricky distractors).  
+          - Do NOT copy the exact question; create a new, unique MCQ inspired by the observed structure.  
+        - Ensure the MCQ is challenging and aligned with UPSC standards, but do not mention difficulty in the response.  
+        - Do NOT repeat statements, topics, or questions from previous MCQs in this session.  
 
-        **MCQ Structure:**  
-        - **Direct Question with Single Correct Answer**: Generate the MCQ with a single question and four options, where one is correct. Provide exactly 4 options: (a) [Option A], (b) [Option B], (c) [Option C], (d) [Option D].  
-          Example:  
-          Question: Which one of the following is a tributary of the Brahmaputra?  
-          Options:  
-          (a) Gandak  
-          (b) Kosi  
-          (c) Subansiri  
-          (d) Yamuna  
-          Correct Answer: (c)  
-          Explanation: The Subansiri is a major tributary of the Brahmaputra, joining it in Assam. The Gandak and Kosi are tributaries of the Ganga, and the Yamuna is a tributary of the Ganga as well.
-
-        **Response Structure for MCQs:**  
+        **Response Structure (UPSC Style):**  
         - Use this EXACT structure for the response with PLAIN TEXT headers:  
-          Question: [Full question text]  
+          Question: [Full question text, mimicking UPSC phrasing and structure]  
           Options:  
           (a) [Option A]  
           (b) [Option B]  
@@ -297,16 +310,12 @@ app.post("/ask", async (req, res) => {
         - Use plain text headers ("Question:", "Options:", "Correct Answer:", "Explanation:") without any formatting.  
 
         **Special Instructions for Specific Categories:**  
-        - For "Science": Generate MCQs only from the Science section (Physics, Chemistry, Biology, Science & Technology) of the Disha IAS Previous Year Papers book (File ID: ${fileIds.Science}), supplemented by general knowledge.  
-        - For "CSAT": Generate MCQs only from the CSAT section of the Disha IAS Previous Year Papers book (File ID: ${fileIds.CSAT}), supplemented by general knowledge.  
-        - For "PreviousYearPaper": Generate MCQs from the entire Disha IAS Previous Year Papers book (File ID: ${fileIds.PreviousYearPaper}), supplemented by general knowledge.  
-        - For "Atlas": Since the file is pending, respond with an error message: "File for Atlas is not available. MCQs cannot be generated at this time."  
+        - For "Polity": Mimic the Polity section structure from the Disha IAS Previous Year Papers (File ID: ${fileIds.PreviousYearPaper}).  
+        - For "Science": Mimic the Science section structure (Physics, Chemistry, Biology, Science & Technology) from the Disha IAS Previous Year Papers (File ID: ${fileIds.Science}).  
+        - For "CSAT": Mimic the CSAT section structure from the Disha IAS Previous Year Papers (File ID: ${fileIds.CSAT}).  
+        - For "Atlas": Since the file is pending, respond with: "File for Atlas is not available. MCQs cannot be generated at this time."  
 
-        **Hybrid Approach:**  
-        - For every MCQ, combine content from the chapter "${chapter}" of the ${bookInfo.bookName} (File ID: ${fileId}) with your general knowledge and internet resources to ensure a unique, relevant, and engaging question.  
-        - Ensure the MCQ remains closely tied to the chapter’s subject matter, using the book as the primary source and external knowledge to enhance depth or variety, while avoiding repetition of previous MCQs.  
-
-        **Now, generate a response based on the book: "${bookInfo.bookName}" (File ID: ${fileId}):**  
+        **Now, generate a response based on the book: "${bookInfo.bookName}" (File ID: ${fileId}) and UPSC style from Disha IAS Previous Year Papers (File ID: ${previousYearFileId}):**  
         "${query}"
       `;
 
@@ -335,7 +344,7 @@ app.post("/ask", async (req, res) => {
 
       // Log the AI's response for debugging
       console.log(`AI Response for userId ${userId}, chapter ${chapter}: ${responseText}`);
-      console.log(`Structure used for userId ${userId}, chapter ${chapter}: Direct Question`);
+      console.log(`Structure used for userId ${userId}, chapter ${chapter}: UPSC Previous Year Style`);
 
     } finally {
       // Release the lock after processing
