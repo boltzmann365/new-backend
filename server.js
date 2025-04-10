@@ -113,12 +113,13 @@ const categoryToBookMap = {
   }
 };
 
-// Store user threads, question counts, last used structure, and previous topics
+// Store user threads, question counts, last used structure, and chapter themes
 const userThreads = new Map();
 const questionCounts = new Map();
 const lastUsedStructure = new Map();
 const threadLocks = new Map();
-const previousTopics = new Map(); // Track previous topics to avoid repetition
+const chapterThemes = new Map(); // Store extracted themes per chapter
+const usedThemes = new Map(); // Track used themes per session
 
 const acquireLock = async (threadId) => {
   while (threadLocks.get(threadId)) {
@@ -248,6 +249,29 @@ const chooseStructure = (userId) => {
   return upscStructures[newStructureIndex];
 };
 
+// Extract themes from the chapter
+const extractThemes = async (threadId, chapter, fileId) => {
+  const themeInstruction = `
+    Analyze the content of "${chapter}" from the Tamilnadu History Book (File ID: ${fileId}). Extract a comprehensive list of themes, subthemes, and sub-subthemes covering its full scope (e.g., invasions, governance, culture, economy, dynasties, decline). Provide the list in a simple format: "Theme: [theme] - Subtheme: [subtheme] - Sub-subtheme: [sub-subtheme]". Ensure all major aspects are included, and use your understanding to identify both explicit and implicit topics. Return only the list, no additional text.
+  `;
+
+  await openai.beta.threads.messages.create(threadId, {
+    role: "user",
+    content: themeInstruction,
+  });
+
+  const run = await openai.beta.threads.runs.create(threadId, {
+    assistant_id: assistantId,
+    tools: [{ type: "file_search" }],
+  });
+
+  await waitForRunToComplete(threadId, run.id);
+  const messages = await openai.beta.threads.messages.list(threadId);
+  const latestMessage = messages.data.find(m => m.role === "assistant");
+  const themeText = latestMessage?.content[0]?.text?.value || "";
+  return themeText.split("\n").filter(line => line.trim()).map(line => line.trim());
+};
+
 app.post("/ask", async (req, res) => {
   let responseText = "No response available.";
   try {
@@ -289,11 +313,30 @@ app.post("/ask", async (req, res) => {
 
       console.log(`Received request for userId ${userId}, chapter: ${chapter}, question count: ${questionCount}`);
 
-      const selectedStructure = chooseStructure(userId);
+      // Extract themes if not already done for this chapter
+      if (!chapterThemes.has(questionCountKey)) {
+        const themes = await extractThemes(threadId, chapter, fileId);
+        chapterThemes.set(questionCountKey, themes);
+        console.log(`Extracted themes for ${chapter}:`, themes);
+      }
 
-      // Retrieve previous topics for this session
-      let prevTopics = previousTopics.get(questionCountKey) || [];
-      const previousTopicsList = prevTopics.length > 0 ? `Previous topics in this session: ${prevTopics.join(", ")}.` : "No previous topics yet.";
+      const themes = chapterThemes.get(questionCountKey);
+      let used = usedThemes.get(questionCountKey) || [];
+      let availableThemes = themes.filter(t => !used.includes(t));
+      if (availableThemes.length === 0) {
+        used = []; // Reset if all themes used
+        availableThemes = themes;
+      }
+
+      // Randomly select a theme
+      const randomIndex = Math.floor(Math.random() * availableThemes.length);
+      const selectedTheme = availableThemes[randomIndex];
+      used.push(selectedTheme);
+      usedThemes.set(questionCountKey, used);
+
+      console.log(`Selected theme for question ${questionCount}: ${selectedTheme}`);
+
+      const selectedStructure = chooseStructure(userId);
 
       const generalInstruction = `
         You are an AI designed to create an elite UPSC training camp for the TrainWithMe platform, delivering diverse, deeply researched, and accurate MCQs that captivate and challenge users. You have access to the uploaded book content (File ID: ${fileId}) and your extensive training data encompassing vast historical, philosophical, and cultural knowledge.
@@ -306,11 +349,11 @@ app.post("/ask", async (req, res) => {
 
         **Instructions for MCQ Generation:**  
         - Generate 1 MCQ inspired by the specified chapter ("${chapter}") of the book (${bookInfo.bookName}), or the entire book if no chapter is specified.  
-        - **Even and Dynamic Coverage**: Analyze the full content of "${chapter}" (File ID: ${fileId}) and distribute focus evenly across its timeline, themes, events, figures, and contexts (e.g., political rise, military campaigns, administration, economy, culture, decline). Use your understanding to identify all key aspects without fixating on any single part (e.g., avoid over-repeating Ashoka, Chandragupta, or dhamma in "Unit 4").  
-        - **Break Fixation**: For this MCQ (question ${questionCount}), select a fresh focus distinct from previous topics in this session (${previousTopicsList}). Shift progressively across the chapter’s breadth with each question, ensuring no repetition of figures, events, or themes unless presented in a novel way.  
-        - **Expand with External Knowledge**: Enrich the MCQ with your broader training data, introducing diverse, relevant details or events not explicitly in the chapter but thematically connected (e.g., for "Unit 4," explore Seleucid interactions, post-Mauryan transitions, or regional impacts). Ensure these additions enhance variety while aligning with the chapter’s historical context.  
-        - **Maximum Complexity and Depth**: Craft a challenging, unique MCQ that tests deep understanding, critical thinking, and analytical skills at an elite UPSC level. Dive into lesser-known aspects (e.g., specific officials, economic policies, cultural shifts) to surprise and engage users.  
-        - **Accuracy Assurance**: Verify the factual correctness of the question, options, and answer. Cross-check historical details and ensure the correct option aligns with the explanation, avoiding errors or mismatches.  
+        - **Theme-Based Focus**: Base this MCQ (question ${questionCount}) on the theme: "${selectedTheme}". Use the chapter content (File ID: ${fileId}) as the primary source, but interpret the theme broadly to include related subthemes or sub-subthemes.  
+        - **Even Distribution**: Rotate through all extracted themes across questions to ensure every part of the chapter gets equal attention. Avoid fixating on overused figures (e.g., Muhammad Bin Qasim, Mahmud of Ghazni) or events unless tied to "${selectedTheme}" in a fresh way.  
+        - **Expand with Training Data**: Enrich the MCQ with your vast training data, including details or events not explicitly in the chapter but relevant to "${selectedTheme}" (e.g., Persian influences on Sultanate culture, Mongol impacts on Tughlaq decline), ensuring diversity and depth.  
+        - **Maximum Complexity**: Craft a challenging, unique MCQ that tests deep understanding, critical thinking, and analytical skills at an elite UPSC level, avoiding repetitive patterns.  
+        - **Accuracy Assurance**: Verify the factual correctness of the question, options, and answer. Cross-check historical details and ensure the correct option aligns with the explanation.  
 
         **UPSC Structure to Use:**  
         - Use the following UPSC structure for this MCQ:  
@@ -339,7 +382,7 @@ app.post("/ask", async (req, res) => {
         - For "PreviousYearPaper": Base on the entire Disha IAS book (File ID: ${fileIds.PreviousYearPaper}), weaving in advanced interpretations.  
         - For "Atlas": Since the file is pending, respond with: "File for Atlas is not available. MCQs cannot be generated at this time."  
 
-        **Now, generate a response based on the book: "${bookInfo.bookName}" (File ID: ${fileId}) using the "${selectedStructure.name}" structure, ensuring diverse coverage of "${chapter}":**  
+        **Now, generate a response based on the book: "${bookInfo.bookName}" (File ID: ${fileId}) using the "${selectedStructure.name}" structure, focusing on "${selectedTheme}" within "${chapter}":**  
         "${query}"
       `;
 
@@ -365,13 +408,6 @@ app.post("/ask", async (req, res) => {
       const messages = await openai.beta.threads.messages.list(threadId);
       const latestMessage = messages.data.find(m => m.role === "assistant");
       responseText = latestMessage?.content[0]?.text?.value || "No response available.";
-
-      // Extract the main topic from the question for tracking (simplified heuristic)
-      const topicMatch = responseText.match(/Question:.*?([A-Za-z\s]+(?:Empire|dynasty|War|edicts|administration))/i);
-      const newTopic = topicMatch ? topicMatch[1].trim() : "Unknown Topic";
-      prevTopics.push(newTopic);
-      if (prevTopics.length > 5) prevTopics.shift(); // Keep last 5 topics
-      previousTopics.set(questionCountKey, prevTopics);
 
       console.log(`AI Response for userId ${userId}, chapter ${chapter}: ${responseText}`);
 
