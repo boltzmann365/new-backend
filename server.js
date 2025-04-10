@@ -6,7 +6,7 @@ const OpenAI = require("openai");
 dotenv.config();
 const app = express();
 
-// Updated CORS configuration to handle preflight requests and allow necessary headers
+// Updated CORS configuration
 app.use(
   cors({
     origin: ["https://trainwithme.in", "http://localhost:3000"],
@@ -16,7 +16,6 @@ app.use(
   })
 );
 
-// Handle preflight OPTIONS requests explicitly
 app.options("*", cors());
 
 app.use(express.json());
@@ -117,16 +116,10 @@ const categoryToBookMap = {
   }
 };
 
-// Store user threads (in-memory for simplicity)
+// Store user threads, question counts, and last used structure
 const userThreads = new Map();
-
-// Track the number of questions generated per user session
 const questionCounts = new Map();
-
-// Track the last used structure per user session
 const lastUsedStructure = new Map();
-
-// Thread lock to prevent concurrent requests on the same thread
 const threadLocks = new Map();
 
 const acquireLock = async (threadId) => {
@@ -140,7 +133,7 @@ const releaseLock = (threadId) => {
   threadLocks.delete(threadId);
 };
 
-// Update Assistant to Include File Search with Vector Store
+// Update Assistant with File Search
 const updateAssistantWithFiles = async () => {
   try {
     const validFileIds = Object.values(fileIds).filter(
@@ -179,10 +172,9 @@ const updateAssistantWithFiles = async () => {
   }
 };
 
-// Call this function when the server starts
 updateAssistantWithFiles();
 
-// Function to wait for a run to complete
+// Wait for run completion
 const waitForRunToComplete = async (threadId, runId) => {
   while (true) {
     const runStatus = await openai.beta.threads.runs.retrieve(threadId, runId);
@@ -193,7 +185,6 @@ const waitForRunToComplete = async (threadId, runId) => {
   }
 };
 
-// Function to wait for all active runs to complete
 const waitForAllActiveRuns = async (threadId) => {
   let activeRuns = [];
   do {
@@ -205,7 +196,7 @@ const waitForAllActiveRuns = async (threadId) => {
   } while (activeRuns.length > 0);
 };
 
-// Seven UPSC MCQ Structures
+// UPSC MCQ Structures
 const upscStructures = [
   {
     name: "Multiple Statements - How Many Correct",
@@ -249,13 +240,12 @@ const upscStructures = [
   }
 ];
 
-// Function to choose a structure wisely
 const chooseStructure = (userId) => {
   const lastStructureIndex = lastUsedStructure.get(userId);
   let newStructureIndex;
   do {
     newStructureIndex = Math.floor(Math.random() * upscStructures.length);
-  } while (newStructureIndex === lastStructureIndex && upscStructures.length > 1); // Avoid repetition if possible
+  } while (newStructureIndex === lastStructureIndex && upscStructures.length > 1);
   lastUsedStructure.set(userId, newStructureIndex);
   return upscStructures[newStructureIndex];
 };
@@ -265,7 +255,6 @@ app.post("/ask", async (req, res) => {
   try {
     const { query, category, userId } = req.body;
 
-    // Validate category
     if (!categoryToBookMap[category]) {
       throw new Error(`Invalid category: ${category}. Please provide a valid subject category.`);
     }
@@ -273,7 +262,6 @@ app.post("/ask", async (req, res) => {
     const bookInfo = categoryToBookMap[category];
     const fileId = bookInfo.fileId;
 
-    // Check if the file ID is valid for processing
     if (!fileId || fileId === "pending" || fileId.startsWith("[TBD")) {
       throw new Error(`File for category ${category} is not available (File ID: ${fileId}). MCQs cannot be generated.`);
     }
@@ -285,34 +273,26 @@ app.post("/ask", async (req, res) => {
       userThreads.set(userId, threadId);
     }
 
-    // Acquire a lock for this thread to prevent concurrent requests
     await acquireLock(threadId);
 
     try {
-      // Wait for all active runs to complete before proceeding
       await waitForAllActiveRuns(threadId);
 
-      // Extract the chapter name from the query
-      const chapterMatch = query.match(/Generate 1 MCQ from (.*?) of the Laxmikanth Book/);
+      // Updated chapter extraction for Tamilnadu History Book
+      const chapterMatch = query.match(/Generate 1 MCQ from (.*?) of the Tamilnadu History Book/);
       const chapter = chapterMatch ? chapterMatch[1] : null;
 
-      // Extract the question index from the userId (format: userId-index)
       const userIdParts = userId.split('-');
       const questionIndex = userIdParts.length > 1 ? parseInt(userIdParts[userIdParts.length - 1], 10) : 0;
-
-      // Track the number of questions generated for this user session
       const baseUserId = userIdParts.slice(0, -1).join('-');
       const questionCountKey = `${baseUserId}:${chapter || 'entire-book'}`;
       let questionCount = questionCounts.get(questionCountKey) || 0;
       questionCount++;
       questionCounts.set(questionCountKey, questionCount);
 
-      // Choose a UPSC structure
-      const selectedStructure = chooseStructure(userId);
-
-      // Log the chapter and question count
       console.log(`Received request for userId ${userId}, chapter: ${chapter}, question count: ${questionCount}`);
-      console.log(`Selected UPSC Structure for userId ${userId}: ${selectedStructure.name}`);
+
+      const selectedStructure = chooseStructure(userId);
 
       const generalInstruction = `
         You are an AI trained on UPSC Books for the TrainWithMe platform, with access to both uploaded book content and your general knowledge/internet resources.
@@ -385,11 +365,9 @@ app.post("/ask", async (req, res) => {
       const latestMessage = messages.data.find(m => m.role === "assistant");
       responseText = latestMessage?.content[0]?.text?.value || "No response available.";
 
-      // Log the AI's response for debugging
       console.log(`AI Response for userId ${userId}, chapter ${chapter}: ${responseText}`);
 
     } finally {
-      // Release the lock after processing
       releaseLock(threadId);
     }
 
