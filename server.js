@@ -6,7 +6,6 @@ const OpenAI = require("openai");
 dotenv.config();
 const app = express();
 
-// Updated CORS configuration
 app.use(
   cors({
     origin: ["https://trainwithme.in", "http://localhost:3000"],
@@ -17,7 +16,6 @@ app.use(
 );
 
 app.options("*", cors());
-
 app.use(express.json());
 
 // OpenAI API Setup
@@ -26,7 +24,6 @@ const openai = new OpenAI({
   defaultHeaders: { "OpenAI-Beta": "assistants=v2" }
 });
 
-// Use Assistant ID from .env
 const assistantId = process.env.ASSISTANT_ID;
 
 // File IDs for Reference Books
@@ -47,7 +44,7 @@ const fileIds = {
   Polity: "file-G15UzpuvCRuMG4g6ShCgFK",
 };
 
-// Map categories to their respective books and file IDs
+// Map categories to their books and file IDs
 const categoryToBookMap = {
   TamilnaduHistory: {
     bookName: "Tamilnadu History Book",
@@ -278,7 +275,6 @@ app.post("/ask", async (req, res) => {
     try {
       await waitForAllActiveRuns(threadId);
 
-      // Updated chapter extraction for Tamilnadu History Book
       const chapterMatch = query.match(/Generate 1 MCQ from (.*?) of the Tamilnadu History Book/);
       const chapter = chapterMatch ? chapterMatch[1] : null;
 
@@ -295,7 +291,7 @@ app.post("/ask", async (req, res) => {
       const selectedStructure = chooseStructure(userId);
 
       const generalInstruction = `
-        You are an AI trained on UPSC Books for the TrainWithMe platform, with access to both uploaded book content and your general knowledge/internet resources.
+        You are an AI designed to create an elite UPSC training camp for the TrainWithMe platform, pushing the boundaries of creativity and depth beyond conventional limits. You have access to the uploaded book content (File ID: ${fileId}) and your extensive training data encompassing vast historical, philosophical, and cultural knowledge.
 
         📚 Reference Book for This Query:  
         - Category: ${category}  
@@ -304,41 +300,41 @@ app.post("/ask", async (req, res) => {
         - Description: ${bookInfo.description}  
 
         **Instructions for MCQ Generation:**  
-        - Generate 1 MCQ related to the specified chapter ("${chapter}") of the book (${bookInfo.bookName}) using a hybrid approach:  
-          - **Primary Source**: Use the content from the specified chapter in the attached file (File ID: ${fileId}) as the main basis for the MCQ.  
-          - **Supplementary Source**: Enhance the MCQ with your general knowledge and internet resources to ensure uniqueness, relevance, and depth, while staying closely tied to the chapter’s topic.  
-        - If no chapter is specified, generate the MCQ from the entire book using the same hybrid approach (file content + general knowledge).  
-        - Ensure the MCQ is challenging and aligned with UPSC standards, but do not mention difficulty in the response.  
-        - Do NOT repeat statements, topics, or questions from previous MCQs in this session. Use the hybrid approach to generate unique and diverse MCQs.  
+        - Generate 1 MCQ inspired by the specified chapter ("${chapter}") of the book (${bookInfo.bookName}) or the entire book if no chapter is specified.  
+        - **Thematic Foundation**: Use the chapter’s content (File ID: ${fileId}) as a starting point to identify key themes, events, or concepts.  
+        - **Unleash Creativity and Depth**: Go beyond the chapter’s surface-level content. Explore intricate details, subsects, historical contexts, philosophical underpinnings, interdisciplinary connections, or lesser-known aspects related to the theme (e.g., for Buddhism, delve into its sects, subsects, evolution, or obscure historical impacts; for Ajivika, explore its doctrines, rivalries, or decline).  
+        - **Leverage All Knowledge**: Combine the chapter’s content with your vast training data to craft questions that are exceptionally challenging, unique, and insightful. Draw from external historical records, archaeological findings, or philosophical texts not explicitly in the book to enrich the MCQ, ensuring it remains thematically tied to the chapter.  
+        - **Maximum Complexity**: Design the MCQ to test deep understanding, critical thinking, and analytical skills at an elite level, preparing users for the toughest UPSC scenarios. Do not shy away from obscure or advanced details, even if they extend beyond the book’s scope, as long as they align with the chapter’s theme.  
+        - **Avoid Repetition**: Ensure no overlap with previous MCQs in this session by exploring new dimensions of the topic with each question.  
 
         **UPSC Structure to Use:**  
         - Use the following UPSC structure for this MCQ:  
           - **Structure Name**: ${selectedStructure.name}  
           - **Example**: ${selectedStructure.example}  
           - **Options**: ${selectedStructure.options.join(", ")}  
-        - Adapt the content from the chapter "${chapter}" of ${bookInfo.bookName} (File ID: ${fileId}) to fit this structure.  
+        - Adapt the deeply researched content to fit this structure creatively and precisely.  
 
         **Response Structure:**  
         - Use this EXACT structure for the response with PLAIN TEXT headers:  
-          Question: [Full question text, following the selected UPSC structure]  
+          Question: [Full question text, following the selected UPSC structure, rich with depth and complexity]  
           Options:  
           (a) [Option A]  
           (b) [Option B]  
           (c) [Option C]  
           (d) [Option D]  
           Correct Answer: [Correct option letter, e.g., (a)]  
-          Explanation: [Brief explanation, 2-3 sentences, based on the chapter and supplemented by general knowledge]  
+          Explanation: [Detailed explanation, 3-5 sentences, weaving chapter content with broader knowledge, justifying the answer with precision and insight]  
         - Separate each section with EXACTLY TWO newlines (\n\n).  
         - Start the response directly with "Question:"—do NOT include any introductory text.  
         - Use plain text headers ("Question:", "Options:", "Correct Answer:", "Explanation:") without any formatting.  
 
         **Special Instructions for Specific Categories:**  
-        - For "Science": Generate MCQs only from the Science section (Physics, Chemistry, Biology, Science & Technology) of the Disha IAS Previous Year Papers book (File ID: ${fileIds.Science}).  
-        - For "CSAT": Generate MCQs only from the CSAT section of the Disha IAS Previous Year Papers book (File ID: ${fileIds.CSAT}).  
-        - For "PreviousYearPaper": Generate MCQs from the entire Disha IAS Previous Year Papers book (File ID: ${fileIds.PreviousYearPaper}).  
+        - For "Science": Focus on the Science section of the Disha IAS Previous Year Papers (File ID: ${fileIds.Science}), but extrapolate to cutting-edge scientific historical contexts.  
+        - For "CSAT": Use the CSAT section (File ID: ${fileIds.CSAT}), integrating complex logical extensions.  
+        - For "PreviousYearPaper": Base on the entire Disha IAS book (File ID: ${fileIds.PreviousYearPaper}), weaving in advanced interpretations.  
         - For "Atlas": Since the file is pending, respond with: "File for Atlas is not available. MCQs cannot be generated at this time."  
 
-        **Now, generate a response based on the book: "${bookInfo.bookName}" (File ID: ${fileId}) using the "${selectedStructure.name}" structure:**  
+        **Now, generate a response based on the book: "${bookInfo.bookName}" (File ID: ${fileId}) using the "${selectedStructure.name}" structure, pushing the limits of depth and creativity:**  
         "${query}"
       `;
 
