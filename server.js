@@ -301,11 +301,11 @@ app.post("/ask", async (req, res) => {
 
         **Instructions for MCQ Generation:**  
         - Generate 1 MCQ inspired by the specified chapter ("${chapter}") of the book (${bookInfo.bookName}) or the entire book if no chapter is specified.  
-        - **Thematic Foundation**: Use the chapter’s content (File ID: ${fileId}) as a starting point to identify key themes, events, or concepts.  
-        - **Unleash Creativity and Depth**: Go beyond the chapter’s surface-level content. Explore intricate details, subsects, historical contexts, philosophical underpinnings, interdisciplinary connections, or lesser-known aspects related to the theme (e.g., for Buddhism, delve into its sects, subsects, evolution, or obscure historical impacts; for Ajivika, explore its doctrines, rivalries, or decline).  
-        - **Leverage All Knowledge**: Combine the chapter’s content with your vast training data to craft questions that are exceptionally challenging, unique, and insightful. Draw from external historical records, archaeological findings, or philosophical texts not explicitly in the book to enrich the MCQ, ensuring it remains thematically tied to the chapter.  
-        - **Maximum Complexity**: Design the MCQ to test deep understanding, critical thinking, and analytical skills at an elite level, preparing users for the toughest UPSC scenarios. Do not shy away from obscure or advanced details, even if they extend beyond the book’s scope, as long as they align with the chapter’s theme.  
-        - **Avoid Repetition**: Ensure no overlap with previous MCQs in this session by exploring new dimensions of the topic with each question.  
+        - **Comprehensive Chapter Coverage**: Use the entire scope of the chapter’s content (File ID: ${fileId}) as a foundation, ensuring questions span all major subtopics, events, dynasties, and figures covered (e.g., for "Unit 10: Advent of Arabs and Turks," include early Arab conquests, Turkish invasions, Battles of Tarain, Slave Dynasty establishment, Khilji and Tughlaq dynasties, their kings, and achievements).  
+        - **Balanced Distribution**: Avoid fixating on any single portion of the chapter (e.g., early invasions). Distribute questions across the chapter’s timeline and themes, exploring diverse aspects with each new MCQ to reflect the chapter’s full breadth.  
+        - **Unleash Creativity and Depth**: Go beyond the chapter’s surface-level content. Dive into intricate details (e.g., subsects, lesser-known rulers, philosophical impacts), historical contexts, interdisciplinary connections, or obscure events related to the chapter’s themes, leveraging your vast training data for enrichment while staying thematically tied to the chapter.  
+        - **Maximum Complexity**: Craft the MCQ to test deep understanding, critical thinking, and analytical skills at an elite UPSC level, incorporating advanced or lesser-known details to challenge users comprehensively.  
+        - **Avoid Repetition**: Ensure no overlap with previous MCQs in this session by exploring new dimensions, figures, or events within the chapter with each question.  
 
         **UPSC Structure to Use:**  
         - Use the following UPSC structure for this MCQ:  
@@ -334,7 +334,7 @@ app.post("/ask", async (req, res) => {
         - For "PreviousYearPaper": Base on the entire Disha IAS book (File ID: ${fileIds.PreviousYearPaper}), weaving in advanced interpretations.  
         - For "Atlas": Since the file is pending, respond with: "File for Atlas is not available. MCQs cannot be generated at this time."  
 
-        **Now, generate a response based on the book: "${bookInfo.bookName}" (File ID: ${fileId}) using the "${selectedStructure.name}" structure, pushing the limits of depth and creativity:**  
+        **Now, generate a response based on the book: "${bookInfo.bookName}" (File ID: ${fileId}) using the "${selectedStructure.name}" structure, ensuring comprehensive coverage of "${chapter}":**  
         "${query}"
       `;
 
