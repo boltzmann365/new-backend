@@ -113,11 +113,12 @@ const categoryToBookMap = {
   }
 };
 
-// Store user threads, question counts, and last used structure
+// Store user threads, question counts, last used structure, and previous topics
 const userThreads = new Map();
 const questionCounts = new Map();
 const lastUsedStructure = new Map();
 const threadLocks = new Map();
+const previousTopics = new Map(); // Track previous topics to avoid repetition
 
 const acquireLock = async (threadId) => {
   while (threadLocks.get(threadId)) {
@@ -290,8 +291,12 @@ app.post("/ask", async (req, res) => {
 
       const selectedStructure = chooseStructure(userId);
 
+      // Retrieve previous topics for this session
+      let prevTopics = previousTopics.get(questionCountKey) || [];
+      const previousTopicsList = prevTopics.length > 0 ? `Previous topics in this session: ${prevTopics.join(", ")}.` : "No previous topics yet.";
+
       const generalInstruction = `
-        You are an AI designed to create an elite UPSC training camp for the TrainWithMe platform, pushing the boundaries of creativity and depth beyond conventional limits. You have access to the uploaded book content (File ID: ${fileId}) and your extensive training data encompassing vast historical, philosophical, and cultural knowledge.
+        You are an AI designed to create an elite UPSC training camp for the TrainWithMe platform, delivering diverse, deeply researched, and accurate MCQs that captivate and challenge users. You have access to the uploaded book content (File ID: ${fileId}) and your extensive training data encompassing vast historical, philosophical, and cultural knowledge.
 
         📚 Reference Book for This Query:  
         - Category: ${category}  
@@ -300,12 +305,12 @@ app.post("/ask", async (req, res) => {
         - Description: ${bookInfo.description}  
 
         **Instructions for MCQ Generation:**  
-        - Generate 1 MCQ inspired by the specified chapter ("${chapter}") of the book (${bookInfo.bookName}) or the entire book if no chapter is specified.  
-        - **Comprehensive Chapter Coverage**: Use the entire scope of the chapter’s content (File ID: ${fileId}) as a foundation, ensuring questions span all major subtopics, events, dynasties, and figures covered (e.g., for "Unit 10: Advent of Arabs and Turks," include early Arab conquests, Turkish invasions, Battles of Tarain, Slave Dynasty establishment, Khilji and Tughlaq dynasties, their kings, and achievements).  
-        - **Balanced Distribution**: Avoid fixating on any single portion of the chapter (e.g., early invasions). Distribute questions across the chapter’s timeline and themes, exploring diverse aspects with each new MCQ to reflect the chapter’s full breadth.  
-        - **Unleash Creativity and Depth**: Go beyond the chapter’s surface-level content. Dive into intricate details (e.g., subsects, lesser-known rulers, philosophical impacts), historical contexts, interdisciplinary connections, or obscure events related to the chapter’s themes, leveraging your vast training data for enrichment while staying thematically tied to the chapter.  
-        - **Maximum Complexity**: Craft the MCQ to test deep understanding, critical thinking, and analytical skills at an elite UPSC level, incorporating advanced or lesser-known details to challenge users comprehensively.  
-        - **Avoid Repetition**: Ensure no overlap with previous MCQs in this session by exploring new dimensions, figures, or events within the chapter with each question.  
+        - Generate 1 MCQ inspired by the specified chapter ("${chapter}") of the book (${bookInfo.bookName}), or the entire book if no chapter is specified.  
+        - **Even and Dynamic Coverage**: Analyze the full content of "${chapter}" (File ID: ${fileId}) and distribute focus evenly across its timeline, themes, events, figures, and contexts (e.g., political rise, military campaigns, administration, economy, culture, decline). Use your understanding to identify all key aspects without fixating on any single part (e.g., avoid over-repeating Ashoka, Chandragupta, or dhamma in "Unit 4").  
+        - **Break Fixation**: For this MCQ (question ${questionCount}), select a fresh focus distinct from previous topics in this session (${previousTopicsList}). Shift progressively across the chapter’s breadth with each question, ensuring no repetition of figures, events, or themes unless presented in a novel way.  
+        - **Expand with External Knowledge**: Enrich the MCQ with your broader training data, introducing diverse, relevant details or events not explicitly in the chapter but thematically connected (e.g., for "Unit 4," explore Seleucid interactions, post-Mauryan transitions, or regional impacts). Ensure these additions enhance variety while aligning with the chapter’s historical context.  
+        - **Maximum Complexity and Depth**: Craft a challenging, unique MCQ that tests deep understanding, critical thinking, and analytical skills at an elite UPSC level. Dive into lesser-known aspects (e.g., specific officials, economic policies, cultural shifts) to surprise and engage users.  
+        - **Accuracy Assurance**: Verify the factual correctness of the question, options, and answer. Cross-check historical details and ensure the correct option aligns with the explanation, avoiding errors or mismatches.  
 
         **UPSC Structure to Use:**  
         - Use the following UPSC structure for this MCQ:  
@@ -329,12 +334,12 @@ app.post("/ask", async (req, res) => {
         - Use plain text headers ("Question:", "Options:", "Correct Answer:", "Explanation:") without any formatting.  
 
         **Special Instructions for Specific Categories:**  
-        - For "Science": Focus on the Science section of the Disha IAS Previous Year Papers (File ID: ${fileIds.Science}), but extrapolate to cutting-edge scientific historical contexts.  
+        - For "Science": Focus on the Science section of the Disha IAS Previous Year Papers (File ID: ${fileIds.Science}), extrapolating to cutting-edge historical contexts.  
         - For "CSAT": Use the CSAT section (File ID: ${fileIds.CSAT}), integrating complex logical extensions.  
         - For "PreviousYearPaper": Base on the entire Disha IAS book (File ID: ${fileIds.PreviousYearPaper}), weaving in advanced interpretations.  
         - For "Atlas": Since the file is pending, respond with: "File for Atlas is not available. MCQs cannot be generated at this time."  
 
-        **Now, generate a response based on the book: "${bookInfo.bookName}" (File ID: ${fileId}) using the "${selectedStructure.name}" structure, ensuring comprehensive coverage of "${chapter}":**  
+        **Now, generate a response based on the book: "${bookInfo.bookName}" (File ID: ${fileId}) using the "${selectedStructure.name}" structure, ensuring diverse coverage of "${chapter}":**  
         "${query}"
       `;
 
@@ -360,6 +365,13 @@ app.post("/ask", async (req, res) => {
       const messages = await openai.beta.threads.messages.list(threadId);
       const latestMessage = messages.data.find(m => m.role === "assistant");
       responseText = latestMessage?.content[0]?.text?.value || "No response available.";
+
+      // Extract the main topic from the question for tracking (simplified heuristic)
+      const topicMatch = responseText.match(/Question:.*?([A-Za-z\s]+(?:Empire|dynasty|War|edicts|administration))/i);
+      const newTopic = topicMatch ? topicMatch[1].trim() : "Unknown Topic";
+      prevTopics.push(newTopic);
+      if (prevTopics.length > 5) prevTopics.shift(); // Keep last 5 topics
+      previousTopics.set(questionCountKey, prevTopics);
 
       console.log(`AI Response for userId ${userId}, chapter ${chapter}: ${responseText}`);
 
