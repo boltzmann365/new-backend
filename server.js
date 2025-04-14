@@ -3,8 +3,6 @@ const cors = require("cors");
 const dotenv = require("dotenv");
 const OpenAI = require("openai");
 const { MongoClient } = require("mongodb");
-const path = require("path");
-const fs = require("fs").promises;
 
 dotenv.config();
 const app = express();
@@ -29,8 +27,12 @@ const openai = new OpenAI({
 
 const assistantId = process.env.ASSISTANT_ID;
 
-// MongoDB Setup (for themes only)
+// MongoDB Setup
 const uri = process.env.MONGODB_URI;
+if (!uri) {
+  console.error("Error: MONGODB_URI environment variable is not set.");
+  process.exit(1);
+}
 const client = new MongoClient(uri);
 let db;
 let mongoConnected = false;
@@ -58,7 +60,7 @@ const fileIds = {
   ArtAndCulture: "file-Gn3dsACNC2MP2xS9QeN3Je",
   FundamentalGeography: "file-CMWSg6udmgtVZpNS3tDGHW",
   IndianGeography: "file-U1nQNyCotU2kcSgF6hrarT",
-  Atlas: "pending", // Handled with fallback in /ask
+  Atlas: "pending",
   Science: "file-TGgc65bHqVMxpmj5ULyR6K",
   Environment: "file-Yb1cfrHMATDNQgyUa6jDqw",
   Economy: "file-TJ5Djap1uv4fZeyM5c6sKU",
@@ -169,14 +171,13 @@ async function loadThemes(category) {
   }
 }
 
-// Save themes to MongoDB and JSON for a specific category
+// Save themes to MongoDB for a specific category
 async function saveThemes(category, themes) {
   if (!mongoConnected) {
     console.warn(`MongoDB not connected, cannot save themes for ${category}`);
     return;
   }
   try {
-    // Save to MongoDB
     const collection = db.collection("book_themes");
     await collection.deleteMany({ category });
     const themeDocs = Object.entries(themes).map(([chapter, data]) => ({
@@ -189,28 +190,28 @@ async function saveThemes(category, themes) {
       await collection.insertMany(themeDocs);
     }
     console.log(`Themes saved to MongoDB for ${category}`);
-
-    // Save to JSON
-    const themesFilePath = path.join(__dirname, "themes", `chapter_themes_${category}.json`);
-    console.log(`Writing themes to ${themesFilePath}`);
-    await fs.writeFile(themesFilePath, JSON.stringify(themes, null, 2));
-    console.log(`Successfully wrote themes to ${themesFilePath}`);
   } catch (error) {
     console.error(`Error saving themes for ${category}:`, error.message);
   }
 }
 
-// Extract themes from the chapter and save to MongoDB and JSON
+// Extract themes from the chapter and save to MongoDB
 const extractThemes = async (threadId, chapter, fileId, category) => {
-  // Fallback for Atlas due to pending file
   if (category === "Atlas") {
     console.log(`Atlas file pending, using fallback theme for chapter: ${chapter}`);
     return [`Theme: General Geography - Subtheme: ${chapter || 'Atlas Content'} - Sub-subtheme: Concepts`];
   }
 
-  const themeInstruction = `
-    Analyze the content of "${chapter}" from the ${categoryToBookMap[category].bookName} (File ID: ${fileId}). Extract a comprehensive list of themes, subthemes, and sub-subthemes covering its full scope (e.g., invasions, governance, culture, economy, dynasties, decline for history; physiography, climate, drainage for geography; mechanics, thermodynamics for physics). Provide the list in a simple format: "Theme: [theme] - Subtheme: [subtheme] - Sub-subtheme: [sub-subtheme]". Ensure all major aspects are included, and use your understanding to identify both explicit and implicit topics. Return only the list, no additional text.
-  `;
+  let themeInstruction;
+  if (category === "Polity") {
+    themeInstruction = `
+      Analyze the content of "${chapter}" from Laxmikanth's Indian Polity book (File ID: ${fileId}). Extract a comprehensive list of themes, subthemes, and sub-subthemes covering its full scope, focusing on the historical development of the Indian Constitution, colonial administration, and legislative reforms. Examples include: colonial rule (e.g., Regulating Act 1773, Pitt’s India Act), Government of India Acts (e.g., 1858, 1919, 1935), Indian National Movement (e.g., INC formation, Simon Commission), and constitutional developments (e.g., Cripps Mission, Cabinet Mission). Provide the list in a simple format: "Theme: [theme] - Subtheme: [subtheme] - Sub-subtheme: [sub-subtheme]". Ensure all major aspects are included, and prioritize explicit topics from the chapter. Return only the list, no additional text.
+    `;
+  } else {
+    themeInstruction = `
+      Analyze the content of "${chapter}" from the ${categoryToBookMap[category].bookName} (File ID: ${fileId}). Extract a comprehensive list of themes, subthemes, and sub-subthemes covering its full scope (e.g., invasions, governance, culture, economy, dynasties, decline for history; physiography, climate, drainage for geography; mechanics, thermodynamics for physics). Provide the list in a simple format: "Theme: [theme] - Subtheme: [subtheme] - Sub-subtheme: [sub-subtheme]". Ensure all major aspects are included, and use your understanding to identify both explicit and implicit topics. Return only the list, no additional text.
+    `;
+  }
 
   console.log(`Extracting themes for chapter: ${chapter} in ${category}`);
   await openai.beta.threads.messages.create(threadId, {
@@ -242,7 +243,23 @@ const extractThemes = async (threadId, chapter, fileId, category) => {
   return themes;
 };
 
-// Migrate existing themes from JSON to MongoDB (run this once)
+// New endpoint to fetch chapters with themes
+app.post("/available-chapters", async (req, res) => {
+  try {
+    const { category } = req.body;
+    if (!category || !categoryToBookMap[category]) {
+      return res.status(400).json({ error: "Invalid or missing category" });
+    }
+    const allThemes = await loadThemes(category);
+    const chapters = Object.keys(allThemes).filter(ch => ch !== "entire-book");
+    res.json({ chapters });
+  } catch (error) {
+    console.error(`Error in /available-chapters for category=${req.body.category || 'unknown'}:`, error.message);
+    res.status(500).json({ error: "Failed to fetch available chapters", details: error.message });
+  }
+});
+
+// Migrate existing themes to MongoDB (for manual use only)
 async function migrateThemesToMongoDB() {
   if (!mongoConnected) {
     console.warn("MongoDB not connected, skipping theme migration");
@@ -251,86 +268,62 @@ async function migrateThemesToMongoDB() {
   const categories = Object.keys(categoryToBookMap).filter(cat => cat !== "Atlas");
   console.log(`Categories to migrate themes: ${categories.join(", ")}`);
   for (const category of categories) {
-    const themesFilePath = path.join(__dirname, "themes", `chapter_themes_${category}.json`);
-    console.log(`Checking themes file for ${category} at ${themesFilePath}`);
     try {
-      let data;
-      try {
-        data = await fs.readFile(themesFilePath, "utf8");
-      } catch (error) {
-        if (error.code === "ENOENT") {
-          console.log(`No themes file found for ${category}, creating empty file`);
-          await fs.writeFile(themesFilePath, "{}");
-          data = "{}";
-        } else {
-          throw error;
-        }
-      }
-      let themes;
-      try {
-        themes = JSON.parse(data);
-      } catch (parseError) {
-        console.error(`Failed to parse JSON for ${category}:`, parseError.message);
+      let themes = {};
+      let defaultChapter;
+      if (category === "Polity") {
+        defaultChapter = "Chapter 1 Historical Background";
+      } else if (category === "ArtAndCulture") {
+        defaultChapter = "Chapter 1 Indian Architecture, Sculpture and Pottery";
+      } else if (category === "FundamentalGeography") {
+        defaultChapter = "Chapter 1 Geography as a Discipline";
+      } else if (category === "IndianGeography") {
+        defaultChapter = "Chapter 1 India- Location";
+      } else if (category === "TamilnaduHistory") {
+        defaultChapter = "Unit 1 Early India: From the Beginnings to the Indus Civilisation";
+      } else if (category === "Science") {
+        defaultChapter = "Chapter 1 Physics";
+      } else if (category === "Environment") {
+        defaultChapter = "Chapter 1 Ecology";
+      } else if (category === "Economy") {
+        defaultChapter = "Chapter 1 Introduction";
+      } else if (category === "CSAT") {
+        defaultChapter = "Chapter 1 Comprehension";
+      } else if (category === "CurrentAffairs") {
+        defaultChapter = "Chapter 1 Polity and Governance";
+      } else if (category === "PreviousYearPapers") {
+        defaultChapter = "Chapter 1 History";
+      } else {
+        console.log(`No default chapter for ${category}, skipping migration`);
         continue;
       }
-      if (Object.keys(themes).length === 0) {
-        console.log(`Empty themes file for ${category}, initializing with default chapter`);
-        let defaultChapter;
-        if (category === "ArtAndCulture") {
-          defaultChapter = "Chapter 1 Indian Architecture, Sculpture and Pottery";
-        } else if (category === "FundamentalGeography") {
-          defaultChapter = "Chapter 1 Geography as a Discipline";
-        } else if (category === "IndianGeography") {
-          defaultChapter = "Chapter 1 India- Location";
-        } else if (category === "TamilnaduHistory") {
-          defaultChapter = "Unit 1 Early India: From the Beginnings to the Indus Civilisation";
-        } else if (category === "Science") {
-          defaultChapter = "Chapter 1 Physics";
-        } else if (category === "Environment") {
-          defaultChapter = "Chapter 1 Ecology";
-        } else if (category === "Economy") {
-          defaultChapter = "Chapter 1 Introduction";
-        } else if (category === "CSAT") {
-          defaultChapter = "Chapter 1 Comprehension";
-        } else if (category === "CurrentAffairs") {
-          defaultChapter = "Chapter 1 Polity and Governance";
-        } else if (category === "PreviousYearPapers") {
-          defaultChapter = "Chapter 1 History";
-        } else if (category === "Polity") {
-          defaultChapter = "Chapter 1 Historical Background";
-        } else {
-          console.log(`Empty themes file for ${category}, skipping migration`);
-          continue;
-        }
-        let threadId = userThreads.get("migration-thread");
-        if (!threadId) {
-          const thread = await openai.beta.threads.create();
-          threadId = thread.id;
-          userThreads.set("migration-thread", threadId);
-        }
-        const themesList = await extractThemes(threadId, defaultChapter, fileIds[category], category);
-        themes[defaultChapter] = {
-          themes: themesList,
-          last_updated: new Date().toISOString()
-        };
-        await saveThemes(category, themes);
-      } else {
-        await saveThemes(category, themes);
-        console.log(`Migrated themes for ${category} to MongoDB`);
+      let threadId = userThreads.get("migration-thread");
+      if (!threadId) {
+        const thread = await openai.beta.threads.create();
+        threadId = thread.id;
+        userThreads.set("migration-thread", threadId);
       }
+      const themesList = await extractThemes(threadId, defaultChapter, fileIds[category], category);
+      themes[defaultChapter] = {
+        themes: themesList,
+        last_updated: new Date().toISOString()
+      };
+      await saveThemes(category, themes);
+      console.log(`Migrated themes for ${category} to MongoDB`);
     } catch (error) {
-      console.error(`Error migrating themes for ${category}:`, {
-        error: error.message,
-        stack: error.stack,
-      });
+      console.error(`Error migrating themes for ${category}:`, error.message);
     }
   }
 }
 
-// Run migration after connecting to MongoDB
-connectToMongoDB().then(() => {
-  if (mongoConnected) {
-    migrateThemesToMongoDB();
+// Manual migration endpoint (optional)
+app.get("/migrate-themes", async (req, res) => {
+  try {
+    await migrateThemesToMongoDB();
+    res.json({ message: "Theme migration completed" });
+  } catch (error) {
+    console.error("Error in /migrate-themes:", error.message);
+    res.status(500).json({ error: "Migration failed", details: error.message });
   }
 });
 
@@ -623,7 +616,7 @@ const chapterToUnitMap = {
   "India – Non-Metallic Minerals and Mineral Fuels": "Chapter 38",
   "India – Mineral Deposits": "Chapter 39",
   "India – Industrial Regions and Levels of Industrial Development": "Chapter 40",
-  "India – Industries": "-chapter 41",
+  "India – Industries": "Chapter 41",
   "India – Power Projects and Power Consumption": "Chapter 42",
   "India – Roads and Inland Waterways": "Chapter 43",
   "India – Railways": "Chapter 44",
@@ -853,7 +846,6 @@ const getFullChapterName = (chapterKey, category) => {
 app.post("/ask", async (req, res) => {
   let responseText = "No response available.";
   try {
-    // Early validation for req.body
     if (!req.body) {
       throw new Error("Request body is missing or invalid.");
     }
@@ -885,10 +877,12 @@ app.post("/ask", async (req, res) => {
 
       const bookName = bookInfo.bookName;
       console.log(`Processing request: category=${category}, userId=${userId}, query=${query}`);
-      
+
       // Match chapter for specific categories
       let chapterMatch;
-      if (category === "IndianGeography") {
+      if (category === "Polity") {
+        chapterMatch = query.match(/Generate 1 MCQ from (.*?)\s*of\s*(?:the\s*)?Laxmikanth'?s?\s*Indian\s*Polity\s*book/i);
+      } else if (category === "IndianGeography") {
         chapterMatch = query.match(/Generate 1 MCQ from (.*?) of the (?:.*Indian Geography Book|NCERT Class 11th Indian Geography)/i);
       } else if (category === "FundamentalGeography") {
         chapterMatch = query.match(/Generate 1 MCQ from (.*?) of the (?:.*Fundamental Geography Book|NCERT Class 11th Fundamentals of Physical Geography)/i);
@@ -900,15 +894,21 @@ app.post("/ask", async (req, res) => {
         chapterMatch = query.match(/Generate 1 MCQ from (.*?) of the (?:.*Science Book|Disha IAS Previous Year Papers)/i);
       } else if (category === "PreviousYearPapers") {
         chapterMatch = query.match(/Generate 1 MCQ from (.*?) of the Disha Publication’s UPSC Prelims Previous Year Papers/i);
-      } else if (category === "Polity") {
-        chapterMatch = query.match(/Generate 1 MCQ from (.*?) of the Laxmikanth's Indian Polity book/i);
       } else {
         chapterMatch = query.match(new RegExp(`Generate 1 MCQ from (.*?) of the ${bookName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
       }
       let chapter = chapterMatch ? chapterMatch[1].trim() : null;
-      let selectedChapter = chapter;
-
       console.log(`Extracted chapter: ${chapter}`);
+
+      // Normalize chapter name for Polity
+      if (category === "Polity" && chapter) {
+        const cleanChapter = chapter.replace(/^Chapter\s*\d+\s*/i, "").trim();
+        const fullChapterName = Object.keys(chapterToUnitMap).find(
+          (key) => key.toLowerCase() === cleanChapter.toLowerCase()
+        );
+        chapter = fullChapterName ? getFullChapterName(fullChapterName, category) : chapter;
+        console.log(`Normalized chapter: ${chapter}`);
+      }
 
       const userIdParts = userId.split('-');
       const questionIndex = userIdParts.length > 1 ? parseInt(userIdParts[userIdParts.length - 1], 10) : 0;
@@ -921,6 +921,7 @@ app.post("/ask", async (req, res) => {
       console.log(`Request details: userId=${userId}, category=${category}, chapter=${chapter || 'entire-book'}, questionCount=${questionCount}`);
 
       let themes;
+      let selectedChapter = chapter;
       if (category === "Atlas") {
         console.log(`Atlas file pending, using fallback themes for chapter: ${chapter}`);
         themes = [`Theme: General Geography - Subtheme: ${chapter || 'Atlas Content'} - Sub-subtheme: Concepts`];
@@ -928,46 +929,31 @@ app.post("/ask", async (req, res) => {
       } else {
         const allThemes = await loadThemes(category);
         if (!chapter) {
-          console.warn(`No chapter specified, selecting default for ${category}`);
+          console.warn(`No chapter specified, selecting random chapter for ${category}`);
           const availableChapters = Object.keys(allThemes).filter(ch => ch !== "entire-book");
           if (availableChapters.length === 0) {
-            console.log(`No themes available for ${category}, extracting for default chapter`);
-            selectedChapter = category === "IndianGeography" ? "Chapter 1 India- Location" :
-                             category === "FundamentalGeography" ? "Chapter 1 Geography as a Discipline" :
-                             category === "ArtAndCulture" ? "Chapter 1 Indian Architecture, Sculpture and Pottery" :
-                             category === "TamilnaduHistory" ? "Unit 1 Early India: From the Beginnings to the Indus Civilisation" :
-                             category === "Science" ? "Chapter 1 Physics" :
-                             category === "Environment" ? "Chapter 1 Ecology" :
-                             category === "Economy" ? "Chapter 1 Introduction" :
-                             category === "CSAT" ? "Chapter 1 Comprehension" :
-                             category === "CurrentAffairs" ? "Chapter 1 Polity and Governance" :
-                             category === "PreviousYearPapers" ? "Chapter 1 History" :
-                             category === "Polity" ? "Chapter 1 Historical Background" :
-                             "Chapter 1"; // Generic fallback
-            chapter = getFullChapterName(selectedChapter, category);
-            themes = await extractThemes(threadId, chapter, fileId, category);
-          } else {
-            const randomChapterIndex = Math.floor(Math.random() * availableChapters.length);
-            selectedChapter = availableChapters[randomChapterIndex];
-            console.log(`Entire Book mode: Selected chapter: ${selectedChapter}`);
-            chapter = getFullChapterName(selectedChapter, category);
-            themes = allThemes[selectedChapter]?.themes;
+            throw new Error(`No themes available for ${category}. Please select a specific chapter.`);
           }
+          const randomChapterIndex = Math.floor(Math.random() * availableChapters.length);
+          selectedChapter = availableChapters[randomChapterIndex];
+          console.log(`Entire Book mode: Selected chapter: ${selectedChapter}`);
+          chapter = getFullChapterName(selectedChapter, category);
+          themes = allThemes[selectedChapter]?.themes;
           const questionCountKeyForChapter = `${baseUserId}:${chapter}`;
           questionCount = questionCounts.get(questionCountKeyForChapter) || 0;
           questionCount++;
           questionCounts.set(questionCountKeyForChapter, questionCount);
         } else {
-          themes = allThemes[chapter]?.themes;
+          selectedChapter = getFullChapterName(chapter, category);
+          themes = allThemes[selectedChapter]?.themes;
           if (!themes) {
-            console.log(`No themes found for ${chapter} in ${category}. Extracting...`);
-            themes = await extractThemes(threadId, chapter, fileId, category);
-            console.log(`Extracted themes for ${chapter}:`, themes);
+            console.log(`No themes found for ${selectedChapter} in ${category}. Extracting...`);
+            themes = await extractThemes(threadId, selectedChapter, fileIds[category], category);
           }
         }
 
         if (!themes || themes.length === 0) {
-          throw new Error(`No themes available for ${chapter || 'entire-book'} in ${category}`);
+          throw new Error(`No themes available for ${selectedChapter || 'entire-book'} in ${category}`);
         }
       }
 
@@ -987,15 +973,13 @@ app.post("/ask", async (req, res) => {
 
       const selectedStructure = chooseStructure(userId);
 
-      // Determine options based on structure and statement count
       let options = selectedStructure.options;
       if (selectedStructure.name === "Multiple Statements - How Many Correct") {
-        options = selectedStructure.options.four; // Default to four, overridden in prompt for three
+        options = selectedStructure.options.four;
       }
 
       let generalInstruction;
       if (category === "Atlas") {
-        // Modified instruction for Atlas to avoid file dependency
         generalInstruction = `
           You are an AI designed to create an elite UPSC training camp for the TrainWithMe platform, delivering diverse, deeply researched, and accurate MCQs that captivate and challenge users. For this query, the Atlas category file is not available, so rely on your extensive training data encompassing vast geographical knowledge and general resources.
 
@@ -1005,8 +989,8 @@ app.post("/ask", async (req, res) => {
           - Description: ${bookInfo.description}  
 
           **Instructions for MCQ Generation:**  
-          - Generate 1 MCQ inspired by the specified chapter ("${chapter}") of an Atlas, covering comprehensive geographical and thematic data. Use general knowledge and standard geographical references to ensure accuracy and depth.  
-          - **Theme-Based Focus**: Base this MCQ (question ${questionCount}) on the theme: "${selectedTheme}". Interpret the theme broadly to include related subthemes or sub-subthemes relevant to "${chapter}".  
+          - Generate 1 MCQ inspired by the specified chapter ("${chapter || 'entire book'}") of an Atlas, covering comprehensive geographical and thematic data. Use general knowledge and standard geographical references to ensure accuracy and depth.  
+          - **Theme-Based Focus**: Base this MCQ (question ${questionCount}) on the theme: "${selectedTheme}". Interpret the theme broadly to include related subthemes or sub-subthemes relevant to "${chapter || 'entire book'}".  
           - **Even Distribution**: Avoid fixating on overused topics (e.g., Mount Everest, Ganga River) unless tied to "${selectedTheme}" in a fresh way.  
           - **Balance Thematic and Fact-Based Questions**: Ensure a 50/50 mix of thematic questions (testing conceptual understanding, e.g., map-making techniques) and fact-based questions (testing specific details, e.g., "The capital of Brazil is..."). Include precise data like geographical features, locations, or statistics where applicable.  
           - **Maximum Complexity and Unpredictability**: Craft a challenging, unique MCQ that tests deep understanding, critical thinking, and analytical skills at an elite UPSC level. Avoid predictable patterns:
@@ -1037,7 +1021,7 @@ app.post("/ask", async (req, res) => {
           - **Special Note for Single Correct Answer Structure**: Include the statements (A-D) directly under the Question text, each statement on a new line.  
           - **Special Note for Multiple Statements Structures**: List the statements under the Question text using decimal numbers (e.g., "1.", "2.", "3.", "4."), each statement on a new line. For three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three."  
 
-          **Now, generate a response for "${chapter}" using the "${selectedStructure.name}" structure, focusing on "${selectedTheme}":**
+          **Now, generate a response for "${chapter || 'entire book'}" using the "${selectedStructure.name}" structure, focusing on "${selectedTheme}":**
         `;
       } else {
         if (!fileId || fileId === "pending" || fileId.startsWith("[TBD")) {
@@ -1054,7 +1038,7 @@ app.post("/ask", async (req, res) => {
           - Description: ${bookInfo.description}  
 
           **Instructions for MCQ Generation:**  
-          - Generate 1 MCQ inspired by the specified chapter ("${chapter}") of the book (${bookInfo.bookName}).  
+          - Generate 1 MCQ inspired by the specified chapter ("${chapter || 'entire book'}") of the book (${bookInfo.bookName}).  
           - **Theme-Based Focus**: Base this MCQ (question ${questionCount}) on the theme: "${selectedTheme}". Use the chapter content (File ID: ${fileId}) as the primary source, but interpret the theme broadly to include related subthemes or sub-subthemes.  
           - **Even Distribution**: Avoid fixating on overused figures or events unless tied to "${selectedTheme}" in a fresh way. For science, avoid overused topics like Newton's laws unless uniquely relevant to "${selectedTheme}".  
           - **Balance Thematic and Fact-Based Questions**: Ensure a 50/50 mix of thematic questions (testing conceptual understanding, e.g., thermodynamics principles) and fact-based questions (testing specific details, e.g., "The atomic number of Carbon is..."). Include precise data like scientific constants, formulas, or discoveries from the chapter where applicable.  
@@ -1087,12 +1071,12 @@ app.post("/ask", async (req, res) => {
           - **Special Note for Multiple Statements Structures**: List the statements under the Question text using decimal numbers (e.g., "1.", "2.", "3.", "4."), each statement on a new line. For three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three."  
 
           **Special Instructions for Specific Categories:**  
+          - For "Polity": Use the Laxmikanth's Indian Polity book (File ID: ${fileIds.Polity}), ensuring questions cover constitutional framework, governance, and political dynamics comprehensively.  
           - For "Science": Focus on the Science section of the Disha IAS Previous Year Papers (File ID: ${fileIds.Science}), covering Physics, Chemistry, Biology, and Science & Technology, extrapolating to cutting-edge historical contexts.  
           - For "CSAT": Use the CSAT section (File ID: ${fileIds.CSAT}), integrating complex logical extensions.  
           - For "PreviousYearPapers": Base on the entire Disha IAS book (File ID: ${fileIds.PreviousYearPapers}), weaving in advanced interpretations.  
-          - For "Polity": Use the Laxmikanth's Indian Polity book (File ID: ${fileIds.Polity}), ensuring questions cover constitutional framework, governance, and political dynamics comprehensively.  
 
-          **Now, generate a response based on the book: "${bookInfo.bookName}" (File ID: ${fileId}) using the "${selectedStructure.name}" structure, focusing on "${selectedTheme}" within "${chapter}":**
+          **Now, generate a response based on the book: "${bookInfo.bookName}" (File ID: ${fileId}) using the "${selectedStructure.name}" structure, focusing on "${selectedTheme}" within "${chapter || 'entire book'}":**
         `;
       }
 
