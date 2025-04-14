@@ -2,6 +2,9 @@ const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
 const OpenAI = require("openai");
+const { MongoClient } = require("mongodb");
+const path = require("path");
+const fs = require("fs").promises;
 
 dotenv.config();
 const app = express();
@@ -26,6 +29,28 @@ const openai = new OpenAI({
 
 const assistantId = process.env.ASSISTANT_ID;
 
+// MongoDB Setup (for themes only)
+const uri = process.env.MONGODB_URI;
+const client = new MongoClient(uri);
+let db;
+let mongoConnected = false;
+
+async function connectToMongoDB() {
+  if (mongoConnected) return;
+  try {
+    await client.connect();
+    console.log("Connected to MongoDB Atlas");
+    db = client.db("trainwithme");
+    mongoConnected = true;
+  } catch (error) {
+    console.error("Failed to connect to MongoDB:", error.message);
+    mongoConnected = false;
+  }
+}
+
+// Connect to MongoDB when the server starts
+connectToMongoDB();
+
 // File IDs for Reference Books
 const fileIds = {
   TamilnaduHistory: "file-UyQKVs91xYHfadeHSjdDw2",
@@ -33,14 +58,14 @@ const fileIds = {
   ArtAndCulture: "file-Gn3dsACNC2MP2xS9QeN3Je",
   FundamentalGeography: "file-CMWSg6udmgtVZpNS3tDGHW",
   IndianGeography: "file-U1nQNyCotU2kcSgF6hrarT",
-  Atlas: "pending",
+  Atlas: "pending", // Handled with fallback in /ask
   Science: "file-TGgc65bHqVMxpmj5ULyR6K",
   Environment: "file-Yb1cfrHMATDNQgyUa6jDqw",
   Economy: "file-TJ5Djap1uv4fZeyM5c6sKU",
   EconomicSurvey2025: "[TBD - Economic Survey file ID]",
   CSAT: "file-TGgc65bHqVMxpmj5ULyR6K",
   CurrentAffairs: "file-5BX6sBLZ2ws44NBUTbcyWg",
-  PreviousYearPaper: "file-TGgc65bHqVMxpmj5ULyR6K",
+  PreviousYearPapers: "file-TGgc65bHqVMxpmj5ULyR6K",
   Polity: "file-G15UzpuvCRuMG4g6ShCgFK",
 };
 
@@ -101,9 +126,9 @@ const categoryToBookMap = {
     fileId: fileIds.CurrentAffairs,
     description: "Vision IAS Current Affairs resource"
   },
-  PreviousYearPaper: {
-    bookName: "Disha IAS Previous Year Papers",
-    fileId: fileIds.PreviousYearPaper,
+  PreviousYearPapers: {
+    bookName: "Disha Publication’s UPSC Prelims Previous Year Papers",
+    fileId: fileIds.PreviousYearPapers,
     description: "Disha IAS book for Previous Year Papers"
   },
   Polity: {
@@ -113,13 +138,201 @@ const categoryToBookMap = {
   }
 };
 
-// Store user threads, question counts, last used structure, and chapter themes
+// Store user threads, question counts, last used structure, and used themes
 const userThreads = new Map();
 const questionCounts = new Map();
 const lastUsedStructure = new Map();
 const threadLocks = new Map();
-const chapterThemes = new Map(); // Store extracted themes per chapter
-const usedThemes = new Map(); // Track used themes per session
+const usedThemes = new Map();
+
+// Load themes from MongoDB for a specific category
+async function loadThemes(category) {
+  if (!mongoConnected) {
+    console.warn(`MongoDB not connected, cannot load themes for ${category}`);
+    return {};
+  }
+  try {
+    const collection = db.collection("book_themes");
+    const themes = await collection.find({ category }).toArray();
+    const themesObject = {};
+    themes.forEach(theme => {
+      themesObject[theme.chapter] = {
+        themes: theme.themes,
+        last_updated: theme.last_updated
+      };
+    });
+    console.log(`Loaded ${Object.keys(themesObject).length} chapters with themes for ${category}`);
+    return themesObject;
+  } catch (error) {
+    console.error(`Error loading themes for ${category} from MongoDB:`, error.message);
+    return {};
+  }
+}
+
+// Save themes to MongoDB and JSON for a specific category
+async function saveThemes(category, themes) {
+  if (!mongoConnected) {
+    console.warn(`MongoDB not connected, cannot save themes for ${category}`);
+    return;
+  }
+  try {
+    // Save to MongoDB
+    const collection = db.collection("book_themes");
+    await collection.deleteMany({ category });
+    const themeDocs = Object.entries(themes).map(([chapter, data]) => ({
+      category,
+      chapter,
+      themes: data.themes,
+      last_updated: data.last_updated
+    }));
+    if (themeDocs.length > 0) {
+      await collection.insertMany(themeDocs);
+    }
+    console.log(`Themes saved to MongoDB for ${category}`);
+
+    // Save to JSON
+    const themesFilePath = path.join(__dirname, "themes", `chapter_themes_${category}.json`);
+    console.log(`Writing themes to ${themesFilePath}`);
+    await fs.writeFile(themesFilePath, JSON.stringify(themes, null, 2));
+    console.log(`Successfully wrote themes to ${themesFilePath}`);
+  } catch (error) {
+    console.error(`Error saving themes for ${category}:`, error.message);
+  }
+}
+
+// Extract themes from the chapter and save to MongoDB and JSON
+const extractThemes = async (threadId, chapter, fileId, category) => {
+  // Fallback for Atlas due to pending file
+  if (category === "Atlas") {
+    console.log(`Atlas file pending, using fallback theme for chapter: ${chapter}`);
+    return [`Theme: General Geography - Subtheme: ${chapter || 'Atlas Content'} - Sub-subtheme: Concepts`];
+  }
+
+  const themeInstruction = `
+    Analyze the content of "${chapter}" from the ${categoryToBookMap[category].bookName} (File ID: ${fileId}). Extract a comprehensive list of themes, subthemes, and sub-subthemes covering its full scope (e.g., invasions, governance, culture, economy, dynasties, decline for history; physiography, climate, drainage for geography; mechanics, thermodynamics for physics). Provide the list in a simple format: "Theme: [theme] - Subtheme: [subtheme] - Sub-subtheme: [sub-subtheme]". Ensure all major aspects are included, and use your understanding to identify both explicit and implicit topics. Return only the list, no additional text.
+  `;
+
+  console.log(`Extracting themes for chapter: ${chapter} in ${category}`);
+  await openai.beta.threads.messages.create(threadId, {
+    role: "user",
+    content: themeInstruction,
+  });
+
+  const run = await openai.beta.threads.runs.create(threadId, {
+    assistant_id: assistantId,
+    tools: [{ type: "file_search" }],
+  });
+
+  await waitForRunToComplete(threadId, run.id);
+  const messages = await openai.beta.threads.messages.list(threadId);
+  const latestMessage = messages.data.find(m => m.role === "assistant");
+  const themeText = latestMessage?.content[0]?.text?.value || "";
+  const themes = themeText.split("\n").filter(line => line.trim()).map(line => line.trim());
+
+  if (mongoConnected) {
+    const allThemes = await loadThemes(category);
+    allThemes[chapter || "entire-book"] = {
+      themes,
+      last_updated: new Date().toISOString()
+    };
+    await saveThemes(category, allThemes);
+  }
+
+  console.log(`Extracted ${themes.length} themes for ${chapter} in ${category}`);
+  return themes;
+};
+
+// Migrate existing themes from JSON to MongoDB (run this once)
+async function migrateThemesToMongoDB() {
+  if (!mongoConnected) {
+    console.warn("MongoDB not connected, skipping theme migration");
+    return;
+  }
+  const categories = Object.keys(categoryToBookMap).filter(cat => cat !== "Atlas");
+  console.log(`Categories to migrate themes: ${categories.join(", ")}`);
+  for (const category of categories) {
+    const themesFilePath = path.join(__dirname, "themes", `chapter_themes_${category}.json`);
+    console.log(`Checking themes file for ${category} at ${themesFilePath}`);
+    try {
+      let data;
+      try {
+        data = await fs.readFile(themesFilePath, "utf8");
+      } catch (error) {
+        if (error.code === "ENOENT") {
+          console.log(`No themes file found for ${category}, creating empty file`);
+          await fs.writeFile(themesFilePath, "{}");
+          data = "{}";
+        } else {
+          throw error;
+        }
+      }
+      let themes;
+      try {
+        themes = JSON.parse(data);
+      } catch (parseError) {
+        console.error(`Failed to parse JSON for ${category}:`, parseError.message);
+        continue;
+      }
+      if (Object.keys(themes).length === 0) {
+        console.log(`Empty themes file for ${category}, initializing with default chapter`);
+        let defaultChapter;
+        if (category === "ArtAndCulture") {
+          defaultChapter = "Chapter 1 Indian Architecture, Sculpture and Pottery";
+        } else if (category === "FundamentalGeography") {
+          defaultChapter = "Chapter 1 Geography as a Discipline";
+        } else if (category === "IndianGeography") {
+          defaultChapter = "Chapter 1 India- Location";
+        } else if (category === "TamilnaduHistory") {
+          defaultChapter = "Unit 1 Early India: From the Beginnings to the Indus Civilisation";
+        } else if (category === "Science") {
+          defaultChapter = "Chapter 1 Physics";
+        } else if (category === "Environment") {
+          defaultChapter = "Chapter 1 Ecology";
+        } else if (category === "Economy") {
+          defaultChapter = "Chapter 1 Introduction";
+        } else if (category === "CSAT") {
+          defaultChapter = "Chapter 1 Comprehension";
+        } else if (category === "CurrentAffairs") {
+          defaultChapter = "Chapter 1 Polity and Governance";
+        } else if (category === "PreviousYearPapers") {
+          defaultChapter = "Chapter 1 History";
+        } else if (category === "Polity") {
+          defaultChapter = "Chapter 1 Historical Background";
+        } else {
+          console.log(`Empty themes file for ${category}, skipping migration`);
+          continue;
+        }
+        let threadId = userThreads.get("migration-thread");
+        if (!threadId) {
+          const thread = await openai.beta.threads.create();
+          threadId = thread.id;
+          userThreads.set("migration-thread", threadId);
+        }
+        const themesList = await extractThemes(threadId, defaultChapter, fileIds[category], category);
+        themes[defaultChapter] = {
+          themes: themesList,
+          last_updated: new Date().toISOString()
+        };
+        await saveThemes(category, themes);
+      } else {
+        await saveThemes(category, themes);
+        console.log(`Migrated themes for ${category} to MongoDB`);
+      }
+    } catch (error) {
+      console.error(`Error migrating themes for ${category}:`, {
+        error: error.message,
+        stack: error.stack,
+      });
+    }
+  }
+}
+
+// Run migration after connecting to MongoDB
+connectToMongoDB().then(() => {
+  if (mongoConnected) {
+    migrateThemesToMongoDB();
+  }
+});
 
 const acquireLock = async (threadId) => {
   while (threadLocks.get(threadId)) {
@@ -165,7 +378,7 @@ const updateAssistantWithFiles = async () => {
         }
       }
     });
-    console.log(`✅ Assistant ${assistantId} updated with file search tool and vector store ID: ${vectorStore.id}`);
+    console.log(`✅ Assistant ${assistantId} updated with vector store ID: ${vectorStore.id}`);
   } catch (error) {
     console.error("❌ Error updating assistant with file search:", error.message);
   }
@@ -200,7 +413,10 @@ const upscStructures = [
   {
     name: "Multiple Statements - How Many Correct",
     example: "Consider the following statements regarding [Topic]: ... How many of the above statements are correct?",
-    options: ["(a) Only one", "(b) Only two", "(c) Only three", "(d) All four"]
+    options: {
+      four: ["(a) Only one", "(b) Only two", "(c) Only three", "(d) All four"],
+      three: ["(a) None", "(b) Only one", "(c) Only two", "(d) All three"]
+    }
   },
   {
     name: "Assertion and Reason",
@@ -213,29 +429,14 @@ const upscStructures = [
     ]
   },
   {
-    name: "Matching List",
-    example: "Match the following [Items] with their [Categories]: ... Select the correct answer using the codes:",
-    options: ["(a) A-1, B-2, C-3, D-4", "(b) A-3, B-1, C-4, D-2", "(c) A-2, B-3, C-1, D-4", "(d) A-4, B-3, C-2, D-1"]
+    name: "Single Correct Answer",
+    example: "Which one of the following is [Question]?",
+    options: ["(a) [Option A]", "(b) [Option B]", "(c) [Option C]", "(d) [Option D]"]
   },
   {
     name: "Multiple Statements - Which Correct",
     example: "With reference to [Topic], consider the following statements: ... Which of the statements given above is/are correct?",
     options: ["(a) 1 and 2 only", "(b) 3 only", "(c) 1 and 3 only", "(d) 1, 2, and 3"]
-  },
-  {
-    name: "Chronological Order",
-    example: "Arrange the following events in chronological order: ... Select the correct order:",
-    options: ["(a) 1-2-3-4", "(b) 2-1-3-4", "(c) 1-3-2-4", "(d) 3-2-1-4"]
-  },
-  {
-    name: "Pairs Matching - Which Correct",
-    example: "Consider the following pairs: ... Which of the pairs are correctly matched?",
-    options: ["(a) A and B only", "(b) B and C only", "(c) A and C only", "(d) A, B, and C"]
-  },
-  {
-    name: "Single Correct Answer",
-    example: "Which one of the following is [Question]?",
-    options: ["(a) [Option A]", "(b) [Option B]", "(c) [Option C]", "(d) [Option D]"]
   }
 ];
 
@@ -249,33 +450,419 @@ const chooseStructure = (userId) => {
   return upscStructures[newStructureIndex];
 };
 
-// Extract themes from the chapter
-const extractThemes = async (threadId, chapter, fileId) => {
-  const themeInstruction = `
-    Analyze the content of "${chapter}" from the Tamilnadu History Book (File ID: ${fileId}). Extract a comprehensive list of themes, subthemes, and sub-subthemes covering its full scope (e.g., invasions, governance, culture, economy, dynasties, decline). Provide the list in a simple format: "Theme: [theme] - Subtheme: [subtheme] - Sub-subtheme: [sub-subtheme]". Ensure all major aspects are included, and use your understanding to identify both explicit and implicit topics. Return only the list, no additional text.
-  `;
+// Map chapter names to their unit numbers for consistency
+const chapterToUnitMap = {
+  // Tamilnadu History
+  "Early India: From the Beginnings to the Indus Civilisation": "Unit 1",
+  "Early India: The Chalcolithic, Megalithic, Iron Age and Vedic Cultures": "Unit 2",
+  "Rise of Territorial Kingdoms and New Religious Sects": "Unit 3",
+  "Emergence of State and Empire": "Unit 4",
+  "Evolution of Society in South India": "Unit 5",
+  "Polity and Society in Post-Mauryan Period": "Unit 6",
+  "The Guptas": "Unit 7",
+  "Harsha and Rise of Regional Kingdoms": "Unit 8",
+  "Cultural Development in South India": "Unit 9",
+  "Advent of Arabs and Turks": "Unit 10",
+  "Later Cholas and Pandyas": "Unit 11",
+  "Bahmani and Vijayanagar Kingdoms": "Unit 12",
+  "Cultural Syncretism: Bhakti Movement in India": "Unit 13",
+  "The Mughal Empire": "Unit 14",
+  "The Marathas": "Unit 15",
+  "The Coming of the Europeans": "Unit 16",
+  "Effects of British Rule": "Unit 17",
+  "Early Resistance to British Rule": "Unit 18",
+  "Towards Modernity": "Unit 19",
+  // Spectrum
+  "Sources for the History of Modern India": "Unit 1",
+  "Major Approaches to the History of Modern India": "Unit 2",
+  "Advent of the Europeans in India": "Unit 3",
+  "India on the Eve of British Conquest": "Unit 4",
+  "Expansion and Consolidation of British Power in India": "Unit 5",
+  "People’s Resistance Against British Before 1857": "Unit 6",
+  "The Revolt of 1857": "Unit 7",
+  "Socio-Religious Reform Movements: General Features": "Unit 8",
+  "A General Survey of Socio-Cultural Reform Movements": "Unit 9",
+  "Beginning of Modern Nationalism in India": "Unit 10",
+  "Indian National Congress: Foundation and the Moderate Phase": "Unit 11",
+  "Era of Militant Nationalism (1905-1909)": "Unit 12",
+  "First Phase of Revolutionary Activities (1907-1917)": "Unit 13",
+  "First World War and Nationalist Response": "Unit 14",
+  "Emergence of Gandhi": "Unit 15",
+  "Non-Cooperation Movement and Khilafat Aandolan": "Unit 16",
+  "Emergence of Swarajists, Socialist Ideas, Revolutionary Activities and Other New Forces": "Unit 17",
+  "Simon Commission and the Nehru Report": "Unit 18",
+  "Civil Disobedience Movement and Round Table Conferences": "Unit 19",
+  "Debates on the Future Strategy after Civil Disobedience Movement": "Unit 20",
+  "Congress Rule in Provinces": "Unit 21",
+  "Nationalist Response in the Wake of World War II": "Unit 22",
+  "Quit India Movement, Demand for Pakistan, and the INA": "Unit 23",
+  "Post-War National Scenario": "Unit 24",
+  "Independence with Partition": "Unit 25",
+  "Constitutional, Administrative and Judicial Developments": "Unit 26",
+  "Survey of British Policies in India": "Unit 27",
+  "Economic Impact of British Rule in India": "Unit 28",
+  "Development of Indian Press": "Unit 29",
+  "Development of Education": "Unit 30",
+  "Peasant Movements 1857-1947": "Unit 31",
+  "The Movement of the Working Class": "Unit 32",
+  "Challenges Before the New-born Nation": "Unit 33",
+  "The Indian States": "Unit 34",
+  "Making of the Constitution for India": "Unit 35",
+  "The Evolution of Nationalist Foreign Policy": "Unit 36",
+  "First General Elections": "Unit 37",
+  "Developments under Nehru’s Leadership (1947-64)": "Unit 38",
+  "After Nehru": "Unit 39",
+  "Personalities Associated with Specific Movements": "Appendix 1",
+  "Governors-General and Viceroys of India: Significant Events in their Rule": "Appendix 2",
+  "Indian National Congress Annual Sessions": "Appendix 3",
+  "Socio-Religious Reform Movements (late 18th to mid-20th century)": "Appendix 4",
+  "Famous Trials of the Nationalist Period": "Appendix 5",
+  "Caste Movements": "Appendix 6",
+  "Peasant Movements": "Appendix 7",
+  "Newspapers and Journals": "Appendix 8",
+  // Art and Culture
+  "Indian Architecture, Sculpture and Pottery": "Chapter 1",
+  "Indian Paintings": "Chapter 2",
+  "Indian Handicrafts": "Chapter 3",
+  "UNESCO’S List of World Heritage Sites in India": "Chapter 4",
+  "Indian Music": "Chapter 5",
+  "Indian Dance Forms": "Chapter 6",
+  "Indian Theatre": "Chapter 7",
+  "Indian Puppetry": "Chapter 8",
+  "Indian Circus": "Chapter 9",
+  "Martial Arts in India": "Chapter 10",
+  "UNESCO’S List of Intangible Cultural Heritage": "Chapter 11",
+  "Languages in India": "Chapter 12",
+  "Religion in India": "Chapter 13",
+  "Buddhism and Jainism": "Chapter 14",
+  "Indian Literature": "Chapter 15",
+  "Schools of Philosophy": "Chapter 16",
+  "Indian Cinema": "Chapter 17",
+  "Science and Technology through the Ages": "Chapter 18",
+  "Calendars in India": "Chapter 19",
+  "Fairs and Festivals of India": "Chapter 20",
+  "Awards and Honours": "Chapter 21",
+  "Law and Culture": "Chapter 22",
+  "Cultural Institutions in India": "Chapter 23",
+  "Coins in Ancient and Medieval India": "Chapter 24",
+  "Indian Culture Abroad": "Chapter 25",
+  "India through the Eyes of Foreign Travellers": "Chapter 26",
+  "Delhi - A City of Seven Sisters": "Appendix-1",
+  "Bhakti and Sufi Movement": "Appendix-2",
+  "Famous Personalities of India": "Appendix-3",
+  "Recent Geographical Indications": "Appendix-4",
+  "Indian Art and Culture (Current Affairs)": "Appendix-5",
+  // Fundamental Geography
+  "Geography as a Discipline": "Chapter 1",
+  "The Origin and Evolution of Earth": "Chapter 2",
+  "Interior of the Earth": "Chapter 3",
+  "Distribution of Oceans and Continents": "Chapter 4",
+  "Minerals and Rocks": "Chapter 5",
+  "Geomorphic Processes": "Chapter 6",
+  "Landforms and their Evolution": "Chapter 7",
+  "Composition and Structure of Atmosphere": "Chapter 8",
+  "Solar Radiation, Heat Balance and Temperature": "Chapter 9",
+  "Atmospheric Circulation and Weather Systems": "Chapter 10",
+  "Water in the Atmosphere": "Chapter 11",
+  "World Climate and Climate Change": "Chapter 12",
+  "Water (Oceans)": "Chapter 13",
+  "Movements of Ocean Water": "Chapter 14",
+  "Life on the Earth": "Chapter 15",
+  "Biodiversity and Conservation": "Chapter 16",
+  // Indian Geography
+  "India- Location": "Chapter 1",
+  "Structure and Physiography": "Chapter 2",
+  "Drainage System": "Chapter 3",
+  "Climate": "Chapter 4",
+  "Natural Vegetation": "Chapter 5",
+  "Soils": "Chapter 6",
+  "Natural Hazards and Disasters": "Chapter 7",
+  "States, Their Capitals, Number of Districts, Area and Population": "Appendix I",
+  "Union Territories, Their Capitals, Area and Population": "Appendix II",
+  "Important River Basins": "Appendix III",
+  "State/Union Territory Wise Forest Cover": "Appendix IV",
+  "National Parks of India": "Appendix V",
+  // Atlas
+  "Maps and Map Making": "Chapter 1",
+  "The Universe": "Chapter 2",
+  "The Earth": "Chapter 3",
+  "Realms of the Earth": "Chapter 4",
+  "Contours and Landforms": "Chapter 5",
+  "The Indian Subcontinent – Physical": "Chapter 6",
+  "The Indian Subcontinent – Political": "Chapter 7",
+  "Northern India and Nepal": "Chapter 8",
+  "North-Central and Eastern India": "Chapter 9",
+  "North-Eastern India, Bhutan and Bangladesh": "Chapter 10",
+  "Western India and Pakistan": "Chapter 11",
+  "Southern India and Sri Lanka": "Chapter 12",
+  "Jammu and Kashmir, Himachal Pradesh, Punjab, Haryana, Delhi and Chandigarh": "Chapter 13",
+  "Rajasthan, Gujarat, Daman & Diu and Dadra & Nagar Haveli": "Chapter 14",
+  "Uttar Pradesh, Uttarakhand, Bihar and Jharkhand": "Chapter 15",
+  "Sikkim, West Bengal and the North-Eastern States": "Chapter 16",
+  "Madhya Pradesh, Chhattisgarh and Odisha": "Chapter 17",
+  "Maharashtra, Telangana, Andhra Pradesh and Goa": "Chapter 18",
+  "Karnataka, Tamil Nadu, Kerala and Puducherry": "Chapter 19",
+  "The Islands": "Chapter 20",
+  "India – Geology, Geological Formations, Structure and Major Faults and Thrusts": "Chapter 21",
+  "India – Physiography": "Chapter 22",
+  "India – Temperature and Pressure": "Chapter 23",
+  "India – Rainfall and Winds": "Chapter 24",
+  "India – Relative Humidity, Annual Temperature and Annual Rainfall": "Chapter 25",
+  "India – Monsoon, Rainfall Trends and Climatic Regions": "Chapter 26",
+  "India – Natural Vegetation and Forest Cover": "Chapter 27",
+  "India – Bio-geographic Zones, Wildlife and Wetlands": "Chapter 28",
+  "India – Drainage Basins and East & West Flowing Rivers": "Chapter 29",
+  "India – Soil and Land Use": "Chapter 30",
+  "India – Irrigation and Net Irrigated Area": "Chapter 31",
+  "India – Food grain Production, Livestock Population, Milk Production and Fisheries": "Chapter 32",
+  "India – Food Crops": "Chapter 33",
+  "India – Cash Crops": "Chapter 34",
+  "India – Important Mineral Belts and Number of Reported Mines": "Chapter 35",
+  "India – Production of Metallic and Non-Metallic Minerals": "Chapter 36",
+  "India – Metallic Minerals": "Chapter 37",
+  "India – Non-Metallic Minerals and Mineral Fuels": "Chapter 38",
+  "India – Mineral Deposits": "Chapter 39",
+  "India – Industrial Regions and Levels of Industrial Development": "Chapter 40",
+  "India – Industries": "-chapter 41",
+  "India – Power Projects and Power Consumption": "Chapter 42",
+  "India – Roads and Inland Waterways": "Chapter 43",
+  "India – Railways": "Chapter 44",
+  "India – Air and Sea Routes": "Chapter 45",
+  "India – Population": "Chapter 46",
+  "India – Human Development": "Chapter 47",
+  "India – Religions and Languages": "Chapter 48",
+  "India – Tourism": "Chapter 49",
+  "India – World Heritage Sites": "Chapter 50",
+  "India – Cultural Heritage": "Chapter 51",
+  "India – Environmental Concerns": "Chapter 52",
+  "India – Natural Hazards": "Chapter 53",
+  "Asia – Physical": "Chapter 54",
+  "Asia – Political": "Chapter 55",
+  "Asia – Climate, Natural Vegetation, Population and Economy": "Chapter 56",
+  "SAARC Countries": "Chapter 57",
+  "China, Mongolia and Taiwan": "Chapter 58",
+  "Japan, North Korea and South Korea": "Chapter 59",
+  "South-Eastern Asia": "Chapter 60",
+  "Myanmar, Thailand, Laos, Cambodia and Vietnam": "Chapter 61",
+  "West Asia": "Chapter 62",
+  "Afghanistan and Pakistan": "Chapter 63",
+  "Europe – Physical": "Chapter 64",
+  "Europe – Political": "Chapter 65",
+  "Europe – Climate, Natural Vegetation, Population and Economy": "Chapter 66",
+  "British Isles": "Chapter 67",
+  "France and Central Europe": "Chapter 68",
+  "Eurasia": "Chapter 69",
+  "Africa – Physical": "Chapter 70",
+  "Africa – Political": "Chapter 71",
+  "Africa – Climate, Natural Vegetation, Population and Economy": "Chapter 72",
+  "Southern Africa and Madagascar": "Chapter 73",
+  "North America": "Chapter 74",
+  "North America – Political": "Chapter 75",
+  "North America – Climate, Natural Vegetation, Population and Economy": "Chapter 76",
+  "United States of America and Alaska": "Chapter 77",
+  "South America – Physical": "Chapter 78",
+  "South America – Political": "Chapter 79",
+  "South America – Climate, Natural Vegetation, Population and Economy": "Chapter 80",
+  "Brazil": "Chapter 81",
+  "Oceania – Physical": "Chapter 82",
+  "Oceania – Political": "Chapter 83",
+  "Oceania – Climate, Natural Vegetation, Population and Economy": "Chapter 84",
+  "Pacific Ocean and Central Pacific Islands": "Chapter 85",
+  "Indian Ocean and Atlantic Ocean": "Chapter 86",
+  "The Arctic Ocean and Antarctica": "Chapter 87",
+  "World – Physical": "Chapter 88",
+  "World – Political": "Chapter 89",
+  "World – Climate": "Chapter 90",
+  "World – Annual Rainfall and Major Ocean Currents": "Chapter 91",
+  "World – Climatic Regions and Water Resources": "Chapter 92",
+  "World – Major Landforms and Forest Cover": "Chapter 93",
+  "World – Soil and Natural Vegetation": "Chapter 94",
+  "World – Agriculture and Industrial Regions": "Chapter 95",
+  "World – Minerals, Mineral Fuels, Trade and Economic Development": "Chapter 96",
+  "World – Population Density, Urbanization, Religions and Languages": "Chapter 97",
+  "World – Human Development": "Chapter 98",
+  "World – Environmental Concerns": "Chapter 99",
+  "World – Biomes at Risk": "Chapter 100",
+  "World – Plate Tectonics and Natural Hazards": "Chapter 101",
+  "World – Air Routes and Sea Routes": "Chapter 102",
+  "World – Facts and Figures – Flag, Area, Population, Countries, Language, Monetary Unit and GDP": "Chapter 103",
+  "World Statistics – Human Development and Economy": "Chapter 104",
+  "World – Geographic Comparisons": "Chapter 105",
+  "World – Time Zones": "Chapter 106",
+  "Index": "Chapter 107",
+  // Science
+  "Physics": "Chapter 1",
+  "Chemistry": "Chapter 2",
+  "Biology": "Chapter 3",
+  "Science and Technology": "Chapter 4",
+  // Environment
+  "Ecology": "Chapter 1",
+  "Ecosystem": "Chapter 2",
+  "Biodiversity": "Chapter 3",
+  "Conservation": "Chapter 4",
+  // Economy
+  "Introduction": "Chapter 1",
+  "Growth and Development": "Chapter 2",
+  "Money and Banking": "Chapter 3",
+  "Public Finance": "Chapter 4",
+  "External Sector": "Chapter 5",
+  // CSAT
+  "Comprehension": "Chapter 1",
+  "Interpersonal Skills Including Communication Skills": "Chapter 2",
+  "Logical Reasoning and Analytical Ability": "Chapter 3",
+  "Decision Making and Problem Solving": "Chapter 4",
+  "General Mental Ability": "Chapter 5",
+  "Basic Numeracy": "Chapter 6",
+  "Data Interpretation": "Chapter 7",
+  // CurrentAffairs
+  "POLITY AND GOVERNANCE": "Chapter 1",
+  "INTERNATIONAL RELATIONS": "Chapter 2",
+  "ECONOMY": "Chapter 3",
+  "SECURITY": "Chapter 4",
+  "ENVIRONMENT": "Chapter 5",
+  "SOCIAL ISSUES": "Chapter 6",
+  "SCIENCE AND TECHNOLOGY": "Chapter 7",
+  "CULTURE": "Chapter 8",
+  "ETHICS": "Chapter 9",
+  "SCHEMES IN NEWS": "Chapter 10",
+  "PLACES IN NEWS": "Chapter 11",
+  "PERSONALITIES IN NEWS": "Chapter 12",
+  // PreviousYearPapers
+  "History": "Chapter 1",
+  "Geography": "Chapter 2",
+  "Polity": "Chapter 3",
+  "Economy": "Chapter 4",
+  "Environment": "Chapter 5",
+  "Science": "Chapter 6",
+  // Polity (Laxmikanth's Indian Polity)
+  "Historical Background": "Chapter 1",
+  "Making of the Constitution": "Chapter 2",
+  "Salient Features of the Constitution": "Chapter 3",
+  "Preamble of the Constitution": "Chapter 4",
+  "Union and Its Territory": "Chapter 5",
+  "Citizenship": "Chapter 6",
+  "Fundamental Rights": "Chapter 7",
+  "Directive Principles of State Policy": "Chapter 8",
+  "Fundamental Duties": "Chapter 9",
+  "Amendment of the Constitution": "Chapter 10",
+  "Basic Structure of the Constitution": "Chapter 11",
+  "Parliamentary System": "Chapter 12",
+  "Federal System": "Chapter 13",
+  "Centre–State Relations": "Chapter 14",
+  "Inter-State Relations": "Chapter 15",
+  "Emergency Provisions": "Chapter 16",
+  "President": "Chapter 17",
+  "Vice-President": "Chapter 18",
+  "Prime Minister": "Chapter 19",
+  "Central Council of Ministers": "Chapter 20",
+  "Cabinet Committees": "Chapter 21",
+  "Parliament": "Chapter 22",
+  "Parliamentary Committees": "Chapter 23",
+  "Parliamentary Forums": "Chapter 24",
+  "Parliamentary Group": "Chapter 25",
+  "Supreme Court": "Chapter 26",
+  "Judicial Review": "Chapter 27",
+  "Judicial Activism": "Chapter 28",
+  "Public Interest Litigation": "Chapter 29",
+  "Governor": "Chapter 30",
+  "Chief Minister": "Chapter 31",
+  "State Council of Ministers": "Chapter 32",
+  "State Legislature": "Chapter 33",
+  "High Court": "Chapter 34",
+  "Subordinate Courts": "Chapter 35",
+  "Special Status of Jammu & Kashmir": "Chapter 36",
+  "Special Provisions for Some States": "Chapter 37",
+  "Panchayati Raj": "Chapter 38",
+  "Municipalities": "Chapter 39",
+  "Union Territories": "Chapter 40",
+  "Scheduled and Tribal Areas": "Chapter 41",
+  "Election Commission": "Chapter 42",
+  "Union Public Service Commission": "Chapter 43",
+  "State Public Service Commission": "Chapter 44",
+  "Finance Commission": "Chapter 45",
+  "Goods and Services Tax Council": "Chapter 46",
+  "National Commission for SCs": "Chapter 47",
+  "National Commission for STs": "Chapter 48",
+  "National Commission for BCs": "Chapter 49",
+  "Special Officer for Linguistic Minorities": "Chapter 50",
+  "Comptroller and Auditor General of India": "Chapter 51",
+  "Attorney General of India": "Chapter 52",
+  "Advocate General of the State": "Chapter 53",
+  "NITI Aayog": "Chapter 54",
+  "National Human Rights Commission": "Chapter 55",
+  "State Human Rights Commission": "Chapter 56",
+  "Central Information Commission": "Chapter 57",
+  "State Information Commission": "Chapter 58",
+  "Central Vigilance Commission": "Chapter 59",
+  "Central Bureau of Investigation": "Chapter 60",
+  "Lokpal and Lokayuktas": "Chapter 61",
+  "National Investigation Agency": "Chapter 62",
+  "National Disaster Management Authority": "Chapter 63",
+  "Co-operative Societies": "Chapter 64",
+  "Official Language": "Chapter 65",
+  "Public Services": "Chapter 66",
+  "Rights and Liabilities of the Government": "Chapter 67",
+  "Special Provisions Relating to Certain Classes": "Chapter 68",
+  "Political Parties": "Chapter 69",
+  "Role of Regional Parties": "Chapter 70",
+  "Elections": "Chapter 71",
+  "Election Laws": "Chapter 72",
+  "Electoral Reforms": "Chapter 73",
+  "Voting Behaviour": "Chapter 74",
+  "Coalition Government": "Chapter 75",
+  "Anti-Defection Law": "Chapter 76",
+  "Pressure Groups": "Chapter 77",
+  "National Integration": "Chapter 78",
+  "Foreign Policy": "Chapter 79",
+  "National Commission to Review the Working of the Constitution": "Chapter 80",
+  "Appendix I: Articles of the Constitution (1–395)": "Appendix I",
+  "Appendix II: Subjects of Union, State, and Concurrent Lists": "Appendix II",
+  "Appendix III: Table of Precedence": "Appendix III",
+  "Appendix IV: Constitutional Amendments at a Glance": "Appendix IV",
+  "Appendix V: Presidents, Vice-Presidents, Prime Ministers, etc.": "Appendix V",
+  "Appendix VI: UPSC Questions on Indian Polity (General Studies–Prelims)": "Appendix VI",
+};
 
-  await openai.beta.threads.messages.create(threadId, {
-    role: "user",
-    content: themeInstruction,
-  });
-
-  const run = await openai.beta.threads.runs.create(threadId, {
-    assistant_id: assistantId,
-    tools: [{ type: "file_search" }],
-  });
-
-  await waitForRunToComplete(threadId, run.id);
-  const messages = await openai.beta.threads.messages.list(threadId);
-  const latestMessage = messages.data.find(m => m.role === "assistant");
-  const themeText = latestMessage?.content[0]?.text?.value || "";
-  return themeText.split("\n").filter(line => line.trim()).map(line => line.trim());
+// Function to get the full chapter name (with unit) from a chapter key
+const getFullChapterName = (chapterKey, category) => {
+  const chapterMap = chapterToUnitMap;
+  const bookName = categoryToBookMap[category].bookName;
+  for (const [chapterName, unit] of Object.entries(chapterMap)) {
+    const fullName = bookName.includes("Spectrum") || 
+                    bookName.includes("Tamilnadu") || 
+                    bookName.includes("Art and Culture") || 
+                    bookName.includes("FundamentalGeography") || 
+                    bookName.includes("IndianGeography") || 
+                    bookName.includes("Atlas") ||
+                    bookName.includes("Science") ||
+                    bookName.includes("Environment") ||
+                    bookName.includes("Economy") ||
+                    bookName.includes("CSAT") ||
+                    bookName.includes("CurrentAffairs") ||
+                    bookName.includes("PreviousYearPapers") ||
+                    bookName.includes("Laxmikanth")
+      ? `${unit} ${chapterName}`.trim()
+      : chapterName;
+    if (chapterKey === fullName || chapterKey === chapterName) {
+      return fullName;
+    }
+  }
+  return chapterKey;
 };
 
 app.post("/ask", async (req, res) => {
   let responseText = "No response available.";
   try {
+    // Early validation for req.body
+    if (!req.body) {
+      throw new Error("Request body is missing or invalid.");
+    }
+
     const { query, category, userId } = req.body;
+
+    if (!query || !category || !userId) {
+      throw new Error("Missing required fields: query, category, or userId.");
+    }
 
     if (!categoryToBookMap[category]) {
       throw new Error(`Invalid category: ${category}. Please provide a valid subject category.`);
@@ -283,10 +870,6 @@ app.post("/ask", async (req, res) => {
 
     const bookInfo = categoryToBookMap[category];
     const fileId = bookInfo.fileId;
-
-    if (!fileId || fileId === "pending" || fileId.startsWith("[TBD")) {
-      throw new Error(`File for category ${category} is not available (File ID: ${fileId}). MCQs cannot be generated.`);
-    }
 
     let threadId = userThreads.get(userId);
     if (!threadId) {
@@ -300,8 +883,32 @@ app.post("/ask", async (req, res) => {
     try {
       await waitForAllActiveRuns(threadId);
 
-      const chapterMatch = query.match(/Generate 1 MCQ from (.*?) of the Tamilnadu History Book/);
-      const chapter = chapterMatch ? chapterMatch[1] : null;
+      const bookName = bookInfo.bookName;
+      console.log(`Processing request: category=${category}, userId=${userId}, query=${query}`);
+      
+      // Match chapter for specific categories
+      let chapterMatch;
+      if (category === "IndianGeography") {
+        chapterMatch = query.match(/Generate 1 MCQ from (.*?) of the (?:.*Indian Geography Book|NCERT Class 11th Indian Geography)/i);
+      } else if (category === "FundamentalGeography") {
+        chapterMatch = query.match(/Generate 1 MCQ from (.*?) of the (?:.*Fundamental Geography Book|NCERT Class 11th Fundamentals of Physical Geography)/i);
+      } else if (category === "ArtAndCulture") {
+        chapterMatch = query.match(/Generate 1 MCQ from (.*?) of the (?:.*Art and Culture Book|Nitin Singhania Art and Culture Book)/i);
+      } else if (category === "Atlas") {
+        chapterMatch = query.match(/Generate 1 MCQ from (.*?) of the Atlas Book/i);
+      } else if (category === "Science") {
+        chapterMatch = query.match(/Generate 1 MCQ from (.*?) of the (?:.*Science Book|Disha IAS Previous Year Papers)/i);
+      } else if (category === "PreviousYearPapers") {
+        chapterMatch = query.match(/Generate 1 MCQ from (.*?) of the Disha Publication’s UPSC Prelims Previous Year Papers/i);
+      } else if (category === "Polity") {
+        chapterMatch = query.match(/Generate 1 MCQ from (.*?) of the Laxmikanth's Indian Polity book/i);
+      } else {
+        chapterMatch = query.match(new RegExp(`Generate 1 MCQ from (.*?) of the ${bookName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+      }
+      let chapter = chapterMatch ? chapterMatch[1].trim() : null;
+      let selectedChapter = chapter;
+
+      console.log(`Extracted chapter: ${chapter}`);
 
       const userIdParts = userId.split('-');
       const questionIndex = userIdParts.length > 1 ? parseInt(userIdParts[userIdParts.length - 1], 10) : 0;
@@ -311,24 +918,66 @@ app.post("/ask", async (req, res) => {
       questionCount++;
       questionCounts.set(questionCountKey, questionCount);
 
-      console.log(`Received request for userId ${userId}, chapter: ${chapter}, question count: ${questionCount}`);
+      console.log(`Request details: userId=${userId}, category=${category}, chapter=${chapter || 'entire-book'}, questionCount=${questionCount}`);
 
-      // Extract themes if not already done for this chapter
-      if (!chapterThemes.has(questionCountKey)) {
-        const themes = await extractThemes(threadId, chapter, fileId);
-        chapterThemes.set(questionCountKey, themes);
-        console.log(`Extracted themes for ${chapter}:`, themes);
+      let themes;
+      if (category === "Atlas") {
+        console.log(`Atlas file pending, using fallback themes for chapter: ${chapter}`);
+        themes = [`Theme: General Geography - Subtheme: ${chapter || 'Atlas Content'} - Sub-subtheme: Concepts`];
+        selectedChapter = chapter || "entire-book";
+      } else {
+        const allThemes = await loadThemes(category);
+        if (!chapter) {
+          console.warn(`No chapter specified, selecting default for ${category}`);
+          const availableChapters = Object.keys(allThemes).filter(ch => ch !== "entire-book");
+          if (availableChapters.length === 0) {
+            console.log(`No themes available for ${category}, extracting for default chapter`);
+            selectedChapter = category === "IndianGeography" ? "Chapter 1 India- Location" :
+                             category === "FundamentalGeography" ? "Chapter 1 Geography as a Discipline" :
+                             category === "ArtAndCulture" ? "Chapter 1 Indian Architecture, Sculpture and Pottery" :
+                             category === "TamilnaduHistory" ? "Unit 1 Early India: From the Beginnings to the Indus Civilisation" :
+                             category === "Science" ? "Chapter 1 Physics" :
+                             category === "Environment" ? "Chapter 1 Ecology" :
+                             category === "Economy" ? "Chapter 1 Introduction" :
+                             category === "CSAT" ? "Chapter 1 Comprehension" :
+                             category === "CurrentAffairs" ? "Chapter 1 Polity and Governance" :
+                             category === "PreviousYearPapers" ? "Chapter 1 History" :
+                             category === "Polity" ? "Chapter 1 Historical Background" :
+                             "Chapter 1"; // Generic fallback
+            chapter = getFullChapterName(selectedChapter, category);
+            themes = await extractThemes(threadId, chapter, fileId, category);
+          } else {
+            const randomChapterIndex = Math.floor(Math.random() * availableChapters.length);
+            selectedChapter = availableChapters[randomChapterIndex];
+            console.log(`Entire Book mode: Selected chapter: ${selectedChapter}`);
+            chapter = getFullChapterName(selectedChapter, category);
+            themes = allThemes[selectedChapter]?.themes;
+          }
+          const questionCountKeyForChapter = `${baseUserId}:${chapter}`;
+          questionCount = questionCounts.get(questionCountKeyForChapter) || 0;
+          questionCount++;
+          questionCounts.set(questionCountKeyForChapter, questionCount);
+        } else {
+          themes = allThemes[chapter]?.themes;
+          if (!themes) {
+            console.log(`No themes found for ${chapter} in ${category}. Extracting...`);
+            themes = await extractThemes(threadId, chapter, fileId, category);
+            console.log(`Extracted themes for ${chapter}:`, themes);
+          }
+        }
+
+        if (!themes || themes.length === 0) {
+          throw new Error(`No themes available for ${chapter || 'entire-book'} in ${category}`);
+        }
       }
 
-      const themes = chapterThemes.get(questionCountKey);
-      let used = usedThemes.get(questionCountKey) || [];
+      const used = usedThemes.get(questionCountKey) || [];
       let availableThemes = themes.filter(t => !used.includes(t));
       if (availableThemes.length === 0) {
-        used = []; // Reset if all themes used
+        used.length = 0;
         availableThemes = themes;
       }
 
-      // Randomly select a theme
       const randomIndex = Math.floor(Math.random() * availableThemes.length);
       const selectedTheme = availableThemes[randomIndex];
       used.push(selectedTheme);
@@ -338,53 +987,114 @@ app.post("/ask", async (req, res) => {
 
       const selectedStructure = chooseStructure(userId);
 
-      const generalInstruction = `
-        You are an AI designed to create an elite UPSC training camp for the TrainWithMe platform, delivering diverse, deeply researched, and accurate MCQs that captivate and challenge users. You have access to the uploaded book content (File ID: ${fileId}) and your extensive training data encompassing vast historical, philosophical, and cultural knowledge.
+      // Determine options based on structure and statement count
+      let options = selectedStructure.options;
+      if (selectedStructure.name === "Multiple Statements - How Many Correct") {
+        options = selectedStructure.options.four; // Default to four, overridden in prompt for three
+      }
 
-        📚 Reference Book for This Query:  
-        - Category: ${category}  
-        - Book: ${bookInfo.bookName}  
-        - File ID: ${fileId}  
-        - Description: ${bookInfo.description}  
+      let generalInstruction;
+      if (category === "Atlas") {
+        // Modified instruction for Atlas to avoid file dependency
+        generalInstruction = `
+          You are an AI designed to create an elite UPSC training camp for the TrainWithMe platform, delivering diverse, deeply researched, and accurate MCQs that captivate and challenge users. For this query, the Atlas category file is not available, so rely on your extensive training data encompassing vast geographical knowledge and general resources.
 
-        **Instructions for MCQ Generation:**  
-        - Generate 1 MCQ inspired by the specified chapter ("${chapter}") of the book (${bookInfo.bookName}), or the entire book if no chapter is specified.  
-        - **Theme-Based Focus**: Base this MCQ (question ${questionCount}) on the theme: "${selectedTheme}". Use the chapter content (File ID: ${fileId}) as the primary source, but interpret the theme broadly to include related subthemes or sub-subthemes.  
-        - **Even Distribution**: Rotate through all extracted themes across questions to ensure every part of the chapter gets equal attention. Avoid fixating on overused figures (e.g., Muhammad Bin Qasim, Mahmud of Ghazni) or events unless tied to "${selectedTheme}" in a fresh way.  
-        - **Expand with Training Data**: Enrich the MCQ with your vast training data, including details or events not explicitly in the chapter but relevant to "${selectedTheme}" (e.g., Persian influences on Sultanate culture, Mongol impacts on Tughlaq decline), ensuring diversity and depth.  
-        - **Maximum Complexity**: Craft a challenging, unique MCQ that tests deep understanding, critical thinking, and analytical skills at an elite UPSC level, avoiding repetitive patterns.  
-        - **Accuracy Assurance**: Verify the factual correctness of the question, options, and answer. Cross-check historical details and ensure the correct option aligns with the explanation.  
+          📚 Reference for This Query:  
+          - Category: ${category}  
+          - Book: ${bookInfo.bookName}  
+          - Description: ${bookInfo.description}  
 
-        **UPSC Structure to Use:**  
-        - Use the following UPSC structure for this MCQ:  
-          - **Structure Name**: ${selectedStructure.name}  
-          - **Example**: ${selectedStructure.example}  
-          - **Options**: ${selectedStructure.options.join(", ")}  
-        - Adapt the deeply researched content to fit this structure creatively and precisely.  
+          **Instructions for MCQ Generation:**  
+          - Generate 1 MCQ inspired by the specified chapter ("${chapter}") of an Atlas, covering comprehensive geographical and thematic data. Use general knowledge and standard geographical references to ensure accuracy and depth.  
+          - **Theme-Based Focus**: Base this MCQ (question ${questionCount}) on the theme: "${selectedTheme}". Interpret the theme broadly to include related subthemes or sub-subthemes relevant to "${chapter}".  
+          - **Even Distribution**: Avoid fixating on overused topics (e.g., Mount Everest, Ganga River) unless tied to "${selectedTheme}" in a fresh way.  
+          - **Balance Thematic and Fact-Based Questions**: Ensure a 50/50 mix of thematic questions (testing conceptual understanding, e.g., map-making techniques) and fact-based questions (testing specific details, e.g., "The capital of Brazil is..."). Include precise data like geographical features, locations, or statistics where applicable.  
+          - **Maximum Complexity and Unpredictability**: Craft a challenging, unique MCQ that tests deep understanding, critical thinking, and analytical skills at an elite UPSC level. Avoid predictable patterns:
+            - For "Multiple Statements - How Many Correct," ensure correct answers are evenly distributed (e.g., "only one" as likely as "only two" or "only three"). Include subtle distractors and false statements to make "only one" or "none" viable.
+            - For "Assertion and Reason," create nuanced assertions and reasons with complex relationships (e.g., partial truths, misleading reasons) to avoid obvious answers like option A. Vary correct options (a, b, c, d) evenly.
+          - **Accuracy Assurance**: Verify the factual correctness of the question, options, and answer using standard geographical knowledge. The explanation must justify why the correct option is true and others are false.  
+          - **Three-Statement Handling**: For "Multiple Statements - How Many Correct" with three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three." Generate questions where "None" can be correct by including deliberately false statements.  
 
-        **Response Structure:**  
-        - Use this EXACT structure for the response with PLAIN TEXT headers:  
-          Question: [Full question text, following the selected UPSC structure, rich with depth and complexity]  
-          Options:  
-          (a) [Option A]  
-          (b) [Option B]  
-          (c) [Option C]  
-          (d) [Option D]  
-          Correct Answer: [Correct option letter, e.g., (a)]  
-          Explanation: [Detailed explanation, 3-5 sentences, weaving chapter content with broader knowledge, justifying the answer with precision and insight]  
-        - Separate each section with EXACTLY TWO newlines (\n\n).  
-        - Start the response directly with "Question:"—do NOT include any introductory text.  
-        - Use plain text headers ("Question:", "Options:", "Correct Answer:", "Explanation:") without any formatting.  
+          **UPSC Structure to Use:**  
+          - Use the following UPSC structure for this MCQ:  
+            - **Structure Name**: ${selectedStructure.name}  
+            - **Example**: ${selectedStructure.example}  
+            - **Options**: ${options.join(", ")} (For "Multiple Statements - How Many Correct," adjust to three-statement options if applicable)  
+          - Adapt the content to fit this structure creatively and precisely.  
 
-        **Special Instructions for Specific Categories:**  
-        - For "Science": Focus on the Science section of the Disha IAS Previous Year Papers (File ID: ${fileIds.Science}), extrapolating to cutting-edge historical contexts.  
-        - For "CSAT": Use the CSAT section (File ID: ${fileIds.CSAT}), integrating complex logical extensions.  
-        - For "PreviousYearPaper": Base on the entire Disha IAS book (File ID: ${fileIds.PreviousYearPaper}), weaving in advanced interpretations.  
-        - For "Atlas": Since the file is pending, respond with: "File for Atlas is not available. MCQs cannot be generated at this time."  
+          **Response Structure:**  
+          - Use this EXACT structure for the response with PLAIN TEXT headers:  
+            Question: [Full question text, following the selected UPSC structure, rich with depth and complexity]  
+            Options:  
+            (a) [Option A]  
+            (b) [Option B]  
+            (c) [Option C]  
+            (d) [Option D]  
+            Correct Answer: [Correct option letter, e.g., (a)]  
+            Explanation: [Detailed explanation, 3-5 sentences, using general geographical knowledge, justifying the answer with precision and insight. Conclude with: "Thus, the correct answer is [option] because [reason]."]  
+          - Separate each section with EXACTLY TWO newlines (\n\n).  
+          - Start the response directly with "Question:"—do NOT include any introductory text.  
+          - **Special Note for Single Correct Answer Structure**: Include the statements (A-D) directly under the Question text, each statement on a new line.  
+          - **Special Note for Multiple Statements Structures**: List the statements under the Question text using decimal numbers (e.g., "1.", "2.", "3.", "4."), each statement on a new line. For three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three."  
 
-        **Now, generate a response based on the book: "${bookInfo.bookName}" (File ID: ${fileId}) using the "${selectedStructure.name}" structure, focusing on "${selectedTheme}" within "${chapter}":**  
-        "${query}"
-      `;
+          **Now, generate a response for "${chapter}" using the "${selectedStructure.name}" structure, focusing on "${selectedTheme}":**
+        `;
+      } else {
+        if (!fileId || fileId === "pending" || fileId.startsWith("[TBD")) {
+          throw new Error(`File for category ${category} is not available (File ID: ${fileId}). MCQs cannot be generated.`);
+        }
+
+        generalInstruction = `
+          You are an AI designed to create an elite UPSC training camp for the TrainWithMe platform, delivering diverse, deeply researched, and accurate MCQs that captivate and challenge users. You have access to the uploaded book content (File ID: ${fileId}) and your extensive training data encompassing vast historical, philosophical, cultural, geographical, and scientific knowledge.
+
+          📚 Reference Book for This Query:  
+          - Category: ${category}  
+          - Book: ${bookInfo.bookName}  
+          - File ID: ${fileId}  
+          - Description: ${bookInfo.description}  
+
+          **Instructions for MCQ Generation:**  
+          - Generate 1 MCQ inspired by the specified chapter ("${chapter}") of the book (${bookInfo.bookName}).  
+          - **Theme-Based Focus**: Base this MCQ (question ${questionCount}) on the theme: "${selectedTheme}". Use the chapter content (File ID: ${fileId}) as the primary source, but interpret the theme broadly to include related subthemes or sub-subthemes.  
+          - **Even Distribution**: Avoid fixating on overused figures or events unless tied to "${selectedTheme}" in a fresh way. For science, avoid overused topics like Newton's laws unless uniquely relevant to "${selectedTheme}".  
+          - **Balance Thematic and Fact-Based Questions**: Ensure a 50/50 mix of thematic questions (testing conceptual understanding, e.g., thermodynamics principles) and fact-based questions (testing specific details, e.g., "The atomic number of Carbon is..."). Include precise data like scientific constants, formulas, or discoveries from the chapter where applicable.  
+          - **Maximum Complexity and Unpredictability**: Craft a challenging, unique MCQ that tests deep understanding, critical thinking, and analytical skills at an elite UPSC level. Avoid predictable patterns:
+            - For "Multiple Statements - How Many Correct," ensure correct answers are evenly distributed (e.g., "only one" as likely as "only two" or "only three"). Include subtle distractors and false statements to make "only one" or "none" viable.
+            - For "Assertion and Reason," create nuanced assertions and reasons with complex relationships (e.g., partial truths, misleading reasons) to avoid obvious answers like option A. Vary correct options (a, b, c, d) evenly.
+          - **Accuracy Assurance**: Verify the factual correctness of the question, options, and answer. Cross-check scientific details and ensure the correct option aligns perfectly with the explanation. The explanation must justify why the correct option is true and others are false.  
+          - **Three-Statement Handling**: For "Multiple Statements - How Many Correct" with three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three." Generate questions where "None" can be correct by including deliberately false statements.  
+
+          **UPSC Structure to Use:**  
+          - Use the following UPSC structure for this MCQ:  
+            - **Structure Name**: ${selectedStructure.name}  
+            - **Example**: ${selectedStructure.example}  
+            - **Options**: ${options.join(", ")} (For "Multiple Statements - How Many Correct," adjust to three-statement options if applicable)  
+          - Adapt the deeply researched content to fit this structure creatively and precisely.  
+
+          **Response Structure:**  
+          - Use this EXACT structure for the response with PLAIN TEXT headers:  
+            Question: [Full question text, following the selected UPSC structure, rich with depth and complexity]  
+            Options:  
+            (a) [Option A]  
+            (b) [Option B]  
+            (c) [Option C]  
+            (d) [Option D]  
+            Correct Answer: [Correct option letter, e.g., (a)]  
+            Explanation: [Detailed explanation, 3-5 sentences, weaving chapter content with broader knowledge, justifying the answer with precision and insight. Conclude with: "Thus, the correct answer is [option] because [reason]."]  
+          - Separate each section with EXACTLY TWO newlines (\n\n).  
+          - Start the response directly with "Question:"—do NOT include any introductory text.  
+          - **Special Note for Single Correct Answer Structure**: Include the statements (A-D) directly under the Question text, each statement on a new line.  
+          - **Special Note for Multiple Statements Structures**: List the statements under the Question text using decimal numbers (e.g., "1.", "2.", "3.", "4."), each statement on a new line. For three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three."  
+
+          **Special Instructions for Specific Categories:**  
+          - For "Science": Focus on the Science section of the Disha IAS Previous Year Papers (File ID: ${fileIds.Science}), covering Physics, Chemistry, Biology, and Science & Technology, extrapolating to cutting-edge historical contexts.  
+          - For "CSAT": Use the CSAT section (File ID: ${fileIds.CSAT}), integrating complex logical extensions.  
+          - For "PreviousYearPapers": Base on the entire Disha IAS book (File ID: ${fileIds.PreviousYearPapers}), weaving in advanced interpretations.  
+          - For "Polity": Use the Laxmikanth's Indian Polity book (File ID: ${fileIds.Polity}), ensuring questions cover constitutional framework, governance, and political dynamics comprehensively.  
+
+          **Now, generate a response based on the book: "${bookInfo.bookName}" (File ID: ${fileId}) using the "${selectedStructure.name}" structure, focusing on "${selectedTheme}" within "${chapter}":**
+        `;
+      }
 
       await openai.beta.threads.messages.create(threadId, {
         role: "user",
@@ -393,11 +1103,11 @@ app.post("/ask", async (req, res) => {
 
       const run = await openai.beta.threads.runs.create(threadId, {
         assistant_id: assistantId,
-        tools: [{ type: "file_search" }],
+        tools: category === "Atlas" ? [] : [{ type: "file_search" }],
       });
 
       if (!run || !run.id) {
-        throw new Error("Failed to create AI Run. Check OpenAI request.");
+        throw new Error("Failed to create AI run. Check OpenAI request.");
       }
 
       const runStatus = await waitForRunToComplete(threadId, run.id);
@@ -409,15 +1119,17 @@ app.post("/ask", async (req, res) => {
       const latestMessage = messages.data.find(m => m.role === "assistant");
       responseText = latestMessage?.content[0]?.text?.value || "No response available.";
 
-      console.log(`AI Response for userId ${userId}, chapter ${chapter}: ${responseText}`);
+      console.log(`Generated response for userId=${userId}, category=${category}, chapter=${chapter || 'entire-book'}: ${responseText.substring(0, 100)}...`);
 
+      res.json({ answer: responseText });
     } finally {
       releaseLock(threadId);
     }
-
-    res.json({ answer: responseText });
   } catch (error) {
-    console.error("Error from OpenAI:", error.message);
+    console.error(`Error in /ask endpoint for category=${req.body.category || 'unknown'}:`, {
+      message: error.message,
+      body: req.body,
+    });
     res.status(500).json({ error: "AI service error", details: error.message });
   }
 });
