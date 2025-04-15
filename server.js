@@ -44,6 +44,8 @@ async function connectToMongoDB() {
     console.log("Connected to MongoDB Atlas");
     db = client.db("trainwithme");
     mongoConnected = true;
+    // Create index for mcqs collection
+    await db.collection("mcqs").createIndex({ book: 1, category: 1, chapter: 1 });
   } catch (error) {
     console.error("Failed to connect to MongoDB:", error.message);
     mongoConnected = false;
@@ -695,10 +697,27 @@ const chapterToUnitMap = {
   "Conservation": "Chapter 4",
   // Economy
   "Introduction": "Chapter 1",
-  "Growth and Development": "Chapter 2",
-  "Money and Banking": "Chapter 3",
-  "Public Finance": "Chapter 4",
-  "External Sector": "Chapter 5",
+  "Growth, Development and Happiness": "Chapter 2",
+  "Evolution of the Indian Economy": "Chapter 3",
+  "Economic Planning": "Chapter 4",
+  "Planning in India": "Chapter 5",
+  "Economic Reforms": "Chapter 6",
+  "Inflation and Business Cycle": "Chapter 7",
+  "Agriculture and Food Management": "Chapter 8",
+  "Industry and Infrastructure": "Chapter 9",
+  "Services Sector": "Chapter 10",
+  "Indian Financial Market": "Chapter 11",
+  "Banking in India": "Chapter 12",
+  "Insurance in India": "Chapter 13",
+  "Security Market in India": "Chapter 14",
+  "External Sector in India": "Chapter 15",
+  "International Economic Organisations and India": "Chapter 16",
+  "Tax Structure in India": "Chapter 17",
+  "Public Finance in India": "Chapter 18",
+  "Sustainability and Climate Change: India and the World": "Chapter 19",
+  "Human Development in India": "Chapter 20",
+  "Burning Socio-Economic Issues": "Chapter 21",
+  "Economic Concepts and Terminologies": "Chapter 22",
   // CSAT
   "Comprehension": "Chapter 1",
   "Interpersonal Skills Including Communication Skills": "Chapter 2",
@@ -708,18 +727,18 @@ const chapterToUnitMap = {
   "Basic Numeracy": "Chapter 6",
   "Data Interpretation": "Chapter 7",
   // CurrentAffairs
-  "POLITY AND GOVERNANCE": "Chapter 1",
-  "INTERNATIONAL RELATIONS": "Chapter 2",
-  "ECONOMY": "Chapter 3",
-  "SECURITY": "Chapter 4",
-  "ENVIRONMENT": "Chapter 5",
-  "SOCIAL ISSUES": "Chapter 6",
-  "SCIENCE AND TECHNOLOGY": "Chapter 7",
-  "CULTURE": "Chapter 8",
-  "ETHICS": "Chapter 9",
-  "SCHEMES IN NEWS": "Chapter 10",
-  "PLACES IN NEWS": "Chapter 11",
-  "PERSONALITIES IN NEWS": "Chapter 12",
+  "Polity and Governance": "Chapter 1",
+  "International Relations": "Chapter 2",
+  "Economy": "Chapter 3",
+  "Security": "Chapter 4",
+  "Environment": "Chapter 5",
+  "Social Issues": "Chapter 6",
+  "Science and Technology": "Chapter 7",
+  "Culture": "Chapter 8",
+  "Ethics": "Chapter 9",
+  "Schemes in News": "Chapter 10",
+  "Places in News": "Chapter 11",
+  "Personalities in News": "Chapter 12",
   // PreviousYearPapers
   "History": "Chapter 1",
   "Geography": "Chapter 2",
@@ -844,13 +863,12 @@ const getFullChapterName = (chapterKey, category) => {
 };
 
 app.post("/ask", async (req, res) => {
-  let responseText = "No response available.";
   try {
     if (!req.body) {
       throw new Error("Request body is missing or invalid.");
     }
 
-    const { query, category, userId } = req.body;
+    const { query, category, userId, count = 1 } = req.body;
 
     if (!query || !category || !userId) {
       throw new Error("Missing required fields: query, category, or userId.");
@@ -862,6 +880,28 @@ app.post("/ask", async (req, res) => {
 
     const bookInfo = categoryToBookMap[category];
     const fileId = bookInfo.fileId;
+
+    // Check MongoDB pool
+    let mcqs = [];
+    if (mongoConnected) {
+      mcqs = await db.collection("mcqs").aggregate([
+        {
+          $match: {
+            book: bookInfo.bookName,
+            category,
+            chapter: query.match(/Generate \d+ MCQ from (.*?) of the/) ? query.match(/Generate \d+ MCQ from (.*?) of the/)[1].trim() : "entire-book"
+          }
+        },
+        { $sample: { size: count } }
+      ]).toArray();
+    }
+
+    if (mcqs.length >= count) {
+      // Return saved MCQs
+      console.log(`Returning ${mcqs.length} cached MCQ${mcqs.length > 1 ? 's' : ''} for category=${category}, userId=${userId}`);
+      res.json({ answers: count === 1 ? mcqs[0].mcq : mcqs.map(m => m.mcq) });
+      return;
+    }
 
     let threadId = userThreads.get(userId);
     if (!threadId) {
@@ -876,26 +916,26 @@ app.post("/ask", async (req, res) => {
       await waitForAllActiveRuns(threadId);
 
       const bookName = bookInfo.bookName;
-      console.log(`Processing request: category=${category}, userId=${userId}, query=${query}`);
+      console.log(`Processing request: category=${category}, userId=${userId}, query=${query}, count=${count}`);
 
       // Match chapter for specific categories
       let chapterMatch;
       if (category === "Polity") {
-        chapterMatch = query.match(/Generate 1 MCQ from (.*?)\s*of\s*(?:the\s*)?Laxmikanth'?s?\s*Indian\s*Polity\s*book/i);
+        chapterMatch = query.match(/Generate \d+ MCQ from (.*?)\s*of\s*(?:the\s*)?Laxmikanth'?s?\s*Indian\s*Polity\s*book/i);
       } else if (category === "IndianGeography") {
-        chapterMatch = query.match(/Generate 1 MCQ from (.*?) of the (?:.*Indian Geography Book|NCERT Class 11th Indian Geography)/i);
+        chapterMatch = query.match(/Generate \d+ MCQ from (.*?) of the (?:.*Indian Geography Book|NCERT Class 11th Indian Geography)/i);
       } else if (category === "FundamentalGeography") {
-        chapterMatch = query.match(/Generate 1 MCQ from (.*?) of the (?:.*Fundamental Geography Book|NCERT Class 11th Fundamentals of Physical Geography)/i);
+        chapterMatch = query.match(/Generate \d+ MCQ from (.*?) of the (?:.*Fundamental Geography Book|NCERT Class 11th Fundamentals of Physical Geography)/i);
       } else if (category === "ArtAndCulture") {
-        chapterMatch = query.match(/Generate 1 MCQ from (.*?) of the (?:.*Art and Culture Book|Nitin Singhania Art and Culture Book)/i);
+        chapterMatch = query.match(/Generate \d+ MCQ from (.*?) of the (?:.*Art and Culture Book|Nitin Singhania Art and Culture Book)/i);
       } else if (category === "Atlas") {
-        chapterMatch = query.match(/Generate 1 MCQ from (.*?) of the Atlas Book/i);
+        chapterMatch = query.match(/Generate \d+ MCQ from (.*?) of the Atlas Book/i);
       } else if (category === "Science") {
-        chapterMatch = query.match(/Generate 1 MCQ from (.*?) of the (?:.*Science Book|Disha IAS Previous Year Papers)/i);
+        chapterMatch = query.match(/Generate \d+ MCQ from (.*?) of the (?:.*Science Book|Disha IAS Previous Year Papers)/i);
       } else if (category === "PreviousYearPapers") {
-        chapterMatch = query.match(/Generate 1 MCQ from (.*?) of the Disha Publication’s UPSC Prelims Previous Year Papers/i);
+        chapterMatch = query.match(/Generate \d+ MCQ from (.*?) of the Disha Publication’s UPSC Prelims Previous Year Papers/i);
       } else {
-        chapterMatch = query.match(new RegExp(`Generate 1 MCQ from (.*?) of the ${bookName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+        chapterMatch = query.match(new RegExp(`Generate \\d+ MCQ from (.*?) of the ${bookName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
       }
       let chapter = chapterMatch ? chapterMatch[1].trim() : null;
       console.log(`Extracted chapter: ${chapter}`);
@@ -957,10 +997,10 @@ app.post("/ask", async (req, res) => {
         }
       }
 
-      const used = usedThemes.get(questionCountKey) || [];
+      let used = usedThemes.get(questionCountKey) || [];
       let availableThemes = themes.filter(t => !used.includes(t));
       if (availableThemes.length === 0) {
-        used.length = 0;
+        used = [];
         availableThemes = themes;
       }
 
@@ -989,25 +1029,25 @@ app.post("/ask", async (req, res) => {
           - Description: ${bookInfo.description}  
 
           **Instructions for MCQ Generation:**  
-          - Generate 1 MCQ inspired by the specified chapter ("${chapter || 'entire book'}") of an Atlas, covering comprehensive geographical and thematic data. Use general knowledge and standard geographical references to ensure accuracy and depth.  
+          - Generate ${count} MCQ${count > 1 ? 's' : ''} inspired by the specified chapter ("${chapter || 'entire book'}") of an Atlas, covering comprehensive geographical and thematic data. Use general knowledge and standard geographical references to ensure accuracy and depth.  
           - **Theme-Based Focus**: Base this MCQ (question ${questionCount}) on the theme: "${selectedTheme}". Interpret the theme broadly to include related subthemes or sub-subthemes relevant to "${chapter || 'entire book'}".  
           - **Even Distribution**: Avoid fixating on overused topics (e.g., Mount Everest, Ganga River) unless tied to "${selectedTheme}" in a fresh way.  
           - **Balance Thematic and Fact-Based Questions**: Ensure a 50/50 mix of thematic questions (testing conceptual understanding, e.g., map-making techniques) and fact-based questions (testing specific details, e.g., "The capital of Brazil is..."). Include precise data like geographical features, locations, or statistics where applicable.  
-          - **Maximum Complexity and Unpredictability**: Craft a challenging, unique MCQ that tests deep understanding, critical thinking, and analytical skills at an elite UPSC level. Avoid predictable patterns:
+          - **Maximum Complexity and Unpredictability**: Craft challenging, unique MCQs that test deep understanding, critical thinking, and analytical skills at an elite UPSC level. Avoid predictable patterns:
             - For "Multiple Statements - How Many Correct," ensure correct answers are evenly distributed (e.g., "only one" as likely as "only two" or "only three"). Include subtle distractors and false statements to make "only one" or "none" viable.
             - For "Assertion and Reason," create nuanced assertions and reasons with complex relationships (e.g., partial truths, misleading reasons) to avoid obvious answers like option A. Vary correct options (a, b, c, d) evenly.
-          - **Accuracy Assurance**: Verify the factual correctness of the question, options, and answer using standard geographical knowledge. The explanation must justify why the correct option is true and others are false.  
+          - **Accuracy Assurance**: Verify the factual correctness of each question, options, and answer using standard geographical knowledge. The explanation must justify why the correct option is true and others are false.  
           - **Three-Statement Handling**: For "Multiple Statements - How Many Correct" with three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three." Generate questions where "None" can be correct by including deliberately false statements.  
 
           **UPSC Structure to Use:**  
-          - Use the following UPSC structure for this MCQ:  
+          - Use the following UPSC structure for each MCQ:  
             - **Structure Name**: ${selectedStructure.name}  
             - **Example**: ${selectedStructure.example}  
             - **Options**: ${options.join(", ")} (For "Multiple Statements - How Many Correct," adjust to three-statement options if applicable)  
           - Adapt the content to fit this structure creatively and precisely.  
 
           **Response Structure:**  
-          - Use this EXACT structure for the response with PLAIN TEXT headers:  
+          - For each MCQ, use this EXACT structure with PLAIN TEXT headers:  
             Question: [Full question text, following the selected UPSC structure, rich with depth and complexity]  
             Options:  
             (a) [Option A]  
@@ -1017,11 +1057,12 @@ app.post("/ask", async (req, res) => {
             Correct Answer: [Correct option letter, e.g., (a)]  
             Explanation: [Detailed explanation, 3-5 sentences, using general geographical knowledge, justifying the answer with precision and insight. Conclude with: "Thus, the correct answer is [option] because [reason]."]  
           - Separate each section with EXACTLY TWO newlines (\n\n).  
-          - Start the response directly with "Question:"—do NOT include any introductory text.  
+          - For multiple MCQs, separate each MCQ with "----" on a new line.  
+          - Start the response directly with "Question:" for the first MCQ—do NOT include any introductory text.  
           - **Special Note for Single Correct Answer Structure**: Include the statements (A-D) directly under the Question text, each statement on a new line.  
           - **Special Note for Multiple Statements Structures**: List the statements under the Question text using decimal numbers (e.g., "1.", "2.", "3.", "4."), each statement on a new line. For three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three."  
 
-          **Now, generate a response for "${chapter || 'entire book'}" using the "${selectedStructure.name}" structure, focusing on "${selectedTheme}":**
+          **Now, generate ${count} MCQ${count > 1 ? 's' : ''} for "${chapter || 'entire book'}" using the "${selectedStructure.name}" structure, focusing on "${selectedTheme}":**
         `;
       } else {
         if (!fileId || fileId === "pending" || fileId.startsWith("[TBD")) {
@@ -1038,25 +1079,25 @@ app.post("/ask", async (req, res) => {
           - Description: ${bookInfo.description}  
 
           **Instructions for MCQ Generation:**  
-          - Generate 1 MCQ inspired by the specified chapter ("${chapter || 'entire book'}") of the book (${bookInfo.bookName}).  
+          - Generate ${count} MCQ${count > 1 ? 's' : ''} inspired by the specified chapter ("${chapter || 'entire book'}") of the book (${bookInfo.bookName}).  
           - **Theme-Based Focus**: Base this MCQ (question ${questionCount}) on the theme: "${selectedTheme}". Use the chapter content (File ID: ${fileId}) as the primary source, but interpret the theme broadly to include related subthemes or sub-subthemes.  
           - **Even Distribution**: Avoid fixating on overused figures or events unless tied to "${selectedTheme}" in a fresh way. For science, avoid overused topics like Newton's laws unless uniquely relevant to "${selectedTheme}".  
           - **Balance Thematic and Fact-Based Questions**: Ensure a 50/50 mix of thematic questions (testing conceptual understanding, e.g., thermodynamics principles) and fact-based questions (testing specific details, e.g., "The atomic number of Carbon is..."). Include precise data like scientific constants, formulas, or discoveries from the chapter where applicable.  
-          - **Maximum Complexity and Unpredictability**: Craft a challenging, unique MCQ that tests deep understanding, critical thinking, and analytical skills at an elite UPSC level. Avoid predictable patterns:
+          - **Maximum Complexity and Unpredictability**: Craft challenging, unique MCQs that test deep understanding, critical thinking, and analytical skills at an elite UPSC level. Avoid predictable patterns:
             - For "Multiple Statements - How Many Correct," ensure correct answers are evenly distributed (e.g., "only one" as likely as "only two" or "only three"). Include subtle distractors and false statements to make "only one" or "none" viable.
             - For "Assertion and Reason," create nuanced assertions and reasons with complex relationships (e.g., partial truths, misleading reasons) to avoid obvious answers like option A. Vary correct options (a, b, c, d) evenly.
-          - **Accuracy Assurance**: Verify the factual correctness of the question, options, and answer. Cross-check scientific details and ensure the correct option aligns perfectly with the explanation. The explanation must justify why the correct option is true and others are false.  
+          - **Accuracy Assurance**: Verify the factual correctness of each question, options, and answer. Cross-check scientific details and ensure the correct option aligns perfectly with the explanation. The explanation must justify why the correct option is true and others are false.  
           - **Three-Statement Handling**: For "Multiple Statements - How Many Correct" with three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three." Generate questions where "None" can be correct by including deliberately false statements.  
 
           **UPSC Structure to Use:**  
-          - Use the following UPSC structure for this MCQ:  
+          - Use the following UPSC structure for each MCQ:  
             - **Structure Name**: ${selectedStructure.name}  
             - **Example**: ${selectedStructure.example}  
             - **Options**: ${options.join(", ")} (For "Multiple Statements - How Many Correct," adjust to three-statement options if applicable)  
           - Adapt the deeply researched content to fit this structure creatively and precisely.  
 
           **Response Structure:**  
-          - Use this EXACT structure for the response with PLAIN TEXT headers:  
+          - For each MCQ, use this EXACT structure with PLAIN TEXT headers:  
             Question: [Full question text, following the selected UPSC structure, rich with depth and complexity]  
             Options:  
             (a) [Option A]  
@@ -1066,7 +1107,8 @@ app.post("/ask", async (req, res) => {
             Correct Answer: [Correct option letter, e.g., (a)]  
             Explanation: [Detailed explanation, 3-5 sentences, weaving chapter content with broader knowledge, justifying the answer with precision and insight. Conclude with: "Thus, the correct answer is [option] because [reason]."]  
           - Separate each section with EXACTLY TWO newlines (\n\n).  
-          - Start the response directly with "Question:"—do NOT include any introductory text.  
+          - For multiple MCQs, separate each MCQ with "----" on a new line.  
+          - Start the response directly with "Question:" for the first MCQ—do NOT include any introductory text.  
           - **Special Note for Single Correct Answer Structure**: Include the statements (A-D) directly under the Question text, each statement on a new line.  
           - **Special Note for Multiple Statements Structures**: List the statements under the Question text using decimal numbers (e.g., "1.", "2.", "3.", "4."), each statement on a new line. For three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three."  
 
@@ -1076,7 +1118,7 @@ app.post("/ask", async (req, res) => {
           - For "CSAT": Use the CSAT section (File ID: ${fileIds.CSAT}), integrating complex logical extensions.  
           - For "PreviousYearPapers": Base on the entire Disha IAS book (File ID: ${fileIds.PreviousYearPapers}), weaving in advanced interpretations.  
 
-          **Now, generate a response based on the book: "${bookInfo.bookName}" (File ID: ${fileId}) using the "${selectedStructure.name}" structure, focusing on "${selectedTheme}" within "${chapter || 'entire book'}":**
+          **Now, generate ${count} MCQ${count > 1 ? 's' : ''} based on the book: "${bookInfo.bookName}" (File ID: ${fileId}) using the "${selectedStructure.name}" structure, focusing on "${selectedTheme}" within "${chapter || 'entire book'}":**
         `;
       }
 
@@ -1101,11 +1143,35 @@ app.post("/ask", async (req, res) => {
 
       const messages = await openai.beta.threads.messages.list(threadId);
       const latestMessage = messages.data.find(m => m.role === "assistant");
-      responseText = latestMessage?.content[0]?.text?.value || "No response available.";
+      const responseText = latestMessage?.content[0]?.text?.value || "No response available.";
 
-      console.log(`Generated response for userId=${userId}, category=${category}, chapter=${chapter || 'entire-book'}: ${responseText.substring(0, 100)}...`);
+      // Parse response into MCQs
+      const newMCQs = [];
+      if (count === 1) {
+        newMCQs.push(parseSingleMCQ(responseText));
+      } else {
+        const mcqTexts = responseText.split("----").map(t => t.trim()).filter(t => t);
+        for (const mcqText of mcqTexts) {
+          newMCQs.push(parseSingleMCQ(mcqText));
+        }
+      }
 
-      res.json({ answer: responseText });
+      // Save new MCQs
+      if (mongoConnected) {
+        for (const mcq of newMCQs) {
+          await db.collection("mcqs").insertOne({
+            book: bookInfo.bookName,
+            category,
+            chapter: selectedChapter || "entire-book",
+            mcq,
+            createdAt: new Date()
+          });
+        }
+      }
+
+      console.log(`Generated ${newMCQs.length} MCQ${newMCQs.length > 1 ? 's' : ''} for userId=${userId}, category=${category}, chapter=${chapter || 'entire-book'}`);
+
+      res.json({ answers: count === 1 ? newMCQs[0] : newMCQs });
     } finally {
       releaseLock(threadId);
     }
@@ -1115,6 +1181,44 @@ app.post("/ask", async (req, res) => {
       body: req.body,
     });
     res.status(500).json({ error: "AI service error", details: error.message });
+  }
+
+  function parseSingleMCQ(rawResponse) {
+    const normalized = rawResponse.replace(/\r\n/g, "\n");
+    const sections = normalized.split(/\n\n/).map(s => s.trim()).filter(s => s);
+    const questionIndex = sections.findIndex(s => s.startsWith("Question:"));
+    const optionsIndex = sections.findIndex(s => s.startsWith("Options:"));
+    const correctAnswerIndex = sections.findIndex(s => s.startsWith("Correct Answer:"));
+    const explanationIndex = sections.findIndex(s => s.startsWith("Explanation:"));
+    let questionLines = [];
+    if (questionIndex !== -1) {
+      const endIndex = optionsIndex !== -1 ? optionsIndex :
+                      correctAnswerIndex !== -1 ? correctAnswerIndex :
+                      explanationIndex !== -1 ? explanationIndex : sections.length;
+      questionLines = sections.slice(questionIndex, endIndex).join("\n").split("\n");
+    }
+    const question = questionLines.length > 0
+      ? questionLines.join("\n").replace("Question: ", "").split("\n").map(l => l.trim()).filter(l => l)
+      : [];
+    let optionsSection = "";
+    if (optionsIndex !== -1) {
+      optionsSection = sections.slice(optionsIndex, correctAnswerIndex !== -1 ? correctAnswerIndex : explanationIndex !== -1 ? explanationIndex : sections.length).join("\n");
+    }
+    const optionsLines = optionsSection.split("\n").map(l => l.trim()).filter(l => l && !l.startsWith("Options:"));
+    const options = {};
+    optionsLines.forEach(line => {
+      const match = line.match(/^\((a|b|c|d)\)\s*(.+)$/i);
+      if (match) options[match[1].toUpperCase()] = match[2].trim();
+    });
+    const correctAnswerLine = correctAnswerIndex !== -1 ? sections[correctAnswerIndex] : null;
+    const correctAnswerText = correctAnswerLine ? correctAnswerLine.split("\n")[0] : "";
+    const correctAnswerMatch = correctAnswerText.match(/Correct Answer:\s*\(([a-d])\)/i);
+    const correctAnswer = correctAnswerMatch ? correctAnswerMatch[1].toUpperCase() : null;
+    const explanationLines = explanationIndex !== -1 ? sections.slice(explanationIndex) : [];
+    const explanation = explanationLines.length > 0
+      ? explanationLines.join(" ").replace("Explanation: ", "").trim()
+      : `The correct answer is ${correctAnswer}.`;
+    return { question, options, correctAnswer, explanation };
   }
 });
 
