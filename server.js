@@ -883,17 +883,23 @@ app.post("/ask", async (req, res) => {
 
     // Check MongoDB pool
     let mcqs = [];
+    let chapterForQuery;
     if (mongoConnected) {
+      chapterForQuery = query.match(/Generate \d+ MCQ from (.*?) of the/) ? query.match(/Generate \d+ MCQ from (.*?) of the/)[1].trim() : "entire-book";
+      console.log(`Checking MongoDB for ${count} MCQ${count > 1 ? 's' : ''}, book: ${bookInfo.bookName}, category: ${category}, chapter: ${chapterForQuery}`);
       mcqs = await db.collection("mcqs").aggregate([
         {
           $match: {
             book: bookInfo.bookName,
             category,
-            chapter: query.match(/Generate \d+ MCQ from (.*?) of the/) ? query.match(/Generate \d+ MCQ from (.*?) of the/)[1].trim() : "entire-book"
+            chapter: chapterForQuery
           }
         },
         { $sample: { size: count } }
       ]).toArray();
+      console.log(`Found ${mcqs.length} cached MCQ${mcqs.length !== 1 ? 's' : ''} for chapter: ${chapterForQuery}`);
+    } else {
+      console.warn("MongoDB not connected, skipping cache check");
     }
 
     if (mcqs.length >= count) {
@@ -934,8 +940,10 @@ app.post("/ask", async (req, res) => {
         chapterMatch = query.match(/Generate \d+ MCQ from (.*?) of the (?:.*Science Book|Disha IAS Previous Year Papers)/i);
       } else if (category === "PreviousYearPapers") {
         chapterMatch = query.match(/Generate \d+ MCQ from (.*?) of the Disha Publication’s UPSC Prelims Previous Year Papers/i);
+      } else if (category === "Economy") {
+        chapterMatch = query.match(/Generate \d+ MCQ from ((?:Chapter \d+\s+)?[\w\s\-:]+?) of the Ramesh Singh Indian Economy Book/i);
       } else {
-        chapterMatch = query.match(new RegExp(`Generate \\d+ MCQ from (.*?) of the ${bookName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+        chapterMatch = query.match(new RegExp(`Generate \\d+ MCQ from (.*?) of the ${bookName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i'));
       }
       let chapter = chapterMatch ? chapterMatch[1].trim() : null;
       console.log(`Extracted chapter: ${chapter}`);
@@ -948,6 +956,15 @@ app.post("/ask", async (req, res) => {
         );
         chapter = fullChapterName ? getFullChapterName(fullChapterName, category) : chapter;
         console.log(`Normalized chapter: ${chapter}`);
+      }
+
+      // Normalize chapter name for Economy
+      if (category === "Economy" && chapter) {
+        const fullChapterName = Object.keys(chapterToUnitMap).find(
+          (key) => chapter.toLowerCase().includes(key.toLowerCase())
+        );
+        chapter = fullChapterName ? getFullChapterName(fullChapterName, category) : chapter;
+        console.log(`Normalized chapter for Economy: ${chapter}`);
       }
 
       const userIdParts = userId.split('-');
@@ -1162,7 +1179,7 @@ app.post("/ask", async (req, res) => {
           await db.collection("mcqs").insertOne({
             book: bookInfo.bookName,
             category,
-            chapter: selectedChapter || "entire-book",
+            chapter: chapterForQuery, // Use same chapter as query
             mcq,
             createdAt: new Date()
           });
