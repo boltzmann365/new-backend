@@ -885,7 +885,11 @@ app.post("/ask", async (req, res) => {
     let mcqs = [];
     let chapterForQuery;
     if (mongoConnected) {
-      chapterForQuery = query.match(/Generate \d+ MCQ from (.*?) of the/) ? query.match(/Generate \d+ MCQ from (.*?) of the/)[1].trim() : "entire-book";
+      // Extract full chapter name for Economy
+      const chapterMatch = category === "Economy" 
+        ? query.match(/Generate \d+ MCQ from (.*?)\s*of\s*(?:the\s*)?Ramesh Singh Indian Economy Book/i)
+        : query.match(/Generate \d+ MCQ from (.*?) of the/);
+      chapterForQuery = chapterMatch ? chapterMatch[1].trim() : "entire-book";
       console.log(`Checking MongoDB for ${count} MCQ${count > 1 ? 's' : ''}, book: ${bookInfo.bookName}, category: ${category}, chapter: ${chapterForQuery}`);
       mcqs = await db.collection("mcqs").aggregate([
         {
@@ -900,6 +904,7 @@ app.post("/ask", async (req, res) => {
       console.log(`Found ${mcqs.length} cached MCQ${mcqs.length !== 1 ? 's' : ''} for chapter: ${chapterForQuery}`);
     } else {
       console.warn("MongoDB not connected, skipping cache check");
+      chapterForQuery = query.match(/Generate \d+ MCQ from (.*?) of the/) ? query.match(/Generate \d+ MCQ from (.*?) of the/)[1].trim() : "entire-book";
     }
 
     if (mcqs.length >= count) {
@@ -941,7 +946,7 @@ app.post("/ask", async (req, res) => {
       } else if (category === "PreviousYearPapers") {
         chapterMatch = query.match(/Generate \d+ MCQ from (.*?) of the Disha Publication’s UPSC Prelims Previous Year Papers/i);
       } else if (category === "Economy") {
-        chapterMatch = query.match(/Generate \d+ MCQ from ((?:Chapter \d+\s+)?[\w\s\-:]+?) of the Ramesh Singh Indian Economy Book/i);
+        chapterMatch = query.match(/Generate \d+ MCQ from (.*?)\s*of\s*(?:the\s*)?Ramesh Singh Indian Economy Book/i);
       } else {
         chapterMatch = query.match(new RegExp(`Generate \\d+ MCQ from (.*?) of the ${bookName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i'));
       }
