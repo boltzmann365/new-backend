@@ -907,31 +907,29 @@ if (mongoConnected) {
   chapterForQuery = query.match(/Generate \d+ MCQ from (.*?) of the/) ? query.match(/Generate \d+ MCQ from (.*?) of the/)[1].trim() : "entire-book";
 }
 
-// Prepare response with cached MCQs
-let responseMCQs = [];
+// Return cached MCQs if available
 if (mcqs.length >= count) {
-  responseMCQs = count === 1 ? [mcqs[0].mcq] : mcqs.map(m => m.mcq);
-  console.log(`Returning ${responseMCQs.length} cached MCQ${responseMCQs.length > 1 ? 's' : ''} for category=${category}, userId=${userId}`);
-  res.json({ answers: count === 1 ? responseMCQs[0] : responseMCQs });
+  console.log(`Returning ${mcqs.length} cached MCQ${mcqs.length > 1 ? 's' : ''} for category=${category}, userId=${userId}`);
+  res.json({ answers: count === 1 ? mcqs[0].mcq : mcqs.map(m => m.mcq) });
 } else {
-  responseMCQs = mcqs.map(m => m.mcq);
+  // If not enough cached MCQs, proceed to generation below
+  console.log(`Not enough cached MCQs (${mcqs.length}/${count}), proceeding to generate`);
 }
 
 // Generate additional MCQ for buffer replenishment if count=1
-if (count === 1 && mongoConnected) {
-  let threadId = userThreads.get(userId);
-  if (!threadId) {
+if (count === 1 && mongoConnected && mcqs.length >= count) {
+  let bufferThreadId = userThreads.get(`buffer-${userId}`);
+  if (!bufferThreadId) {
     const thread = await openai.beta.threads.create();
-    threadId = thread.id;
-    userThreads.set(userId, threadId);
+    bufferThreadId = thread.id;
+    userThreads.set(`buffer-${userId}`, bufferThreadId);
   }
 
-  await acquireLock(threadId);
+  await acquireLock(bufferThreadId);
 
   try {
-    await waitForAllActiveRuns(threadId);
+    await waitForAllActiveRuns(bufferThreadId);
 
-    const bookName = bookInfo.bookName;
     console.log(`Processing request to generate 1 new MCQ for buffer: category=${category}, userId=${userId}, query=${query}`);
 
     // Match chapter for generation
@@ -953,7 +951,7 @@ if (count === 1 && mongoConnected) {
     } else if (category === "Economy") {
       chapterMatch = query.match(/Generate \d+ MCQ from (.*?)\s*of\s*(?:the\s*)?Ramesh Singh Indian Economy Book/i);
     } else {
-      chapterMatch = query.match(new RegExp(`Generate \\d+ MCQ from (.*?) of the ${bookName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i'));
+      chapterMatch = query.match(new RegExp(`Generate \\d+ MCQ from (.*?) of the ${bookInfo.bookName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i'));
     }
     let chapter = chapterMatch ? chapterMatch[1].trim() : null;
     console.log(`Extracted chapter: ${chapter}`);
@@ -1015,7 +1013,7 @@ if (count === 1 && mongoConnected) {
         themes = allThemes[selectedChapter]?.themes;
         if (!themes) {
           console.log(`No themes found for ${selectedChapter} in ${category}. Extracting...`);
-          themes = await extractThemes(threadId, selectedChapter, fileIds[category], category);
+          themes = await extractThemes(bufferThreadId, selectedChapter, fileIds[category], category);
         }
       }
 
@@ -1147,58 +1145,45 @@ if (count === 1 && mongoConnected) {
       `;
     }
 
-    await openai.beta.threads.messages.create(threadId, {
+    await openai.beta.threads.messages.create(bufferThreadId, {
       role: "user",
       content: generalInstruction,
     });
 
-    const run = await openai.beta.threads.runs.create(threadId, {
+    const run = await openai.beta.threads.runs.create(bufferThreadId, {
       assistant_id: assistantId,
       tools: category === "Atlas" ? [] : [{ type: "file_search" }],
     });
 
     if (!run || !run.id) {
-      throw new Error("Failed to create AI run. Check OpenAI request.");
+      throw new Error("Failed to create AI run for buffer MCQ. Check OpenAI request.");
     }
 
-    const runStatus = await waitForRunToComplete(threadId, run.id);
+    const runStatus = await waitForRunToComplete(bufferThreadId, run.id);
     if (runStatus === "failed") {
-      throw new Error("AI request failed.");
+      throw new Error("AI request for buffer MCQ failed.");
     }
 
-    const messages = await openai.beta.threads.messages.list(threadId);
+    const messages = await openai.beta.threads.messages.list(bufferThreadId);
     const latestMessage = messages.data.find(m => m.role === "assistant");
     const responseText = latestMessage?.content[0]?.text?.value || "No response available.";
 
-    // Parse response into MCQs
-    const newMCQs = [];
-    if (count === 1) {
-      newMCQs.push(parseSingleMCQ(responseText));
-    } else {
-      const mcqTexts = responseText.split("----").map(t => t.trim()).filter(t => t);
-      for (const mcqText of mcqTexts) {
-        newMCQs.push(parseSingleMCQ(mcqText));
-      }
-    }
+    // Parse response into MCQ
+    const newMCQ = parseSingleMCQ(responseText);
 
-    // Save new MCQs
-    if (mongoConnected) {
-      for (const mcq of newMCQs) {
-        await db.collection("mcqs").insertOne({
-          book: bookInfo.bookName,
-          category,
-          chapter: chapterForQuery,
-          mcq,
-          createdAt: new Date()
-        });
-      }
-    }
-
-    console.log(`Generated ${newMCQs.length} MCQ${newMCQs.length > 1 ? 's' : ''} for userId=${userId}, category=${category}, chapter=${chapter || 'entire-book'}`);
-
-    res.json({ answers: count === 1 ? newMCQs[0] : newMCQs });
+    // Save new MCQ
+    await db.collection("mcqs").insertOne({
+      book: bookInfo.bookName,
+      category,
+      chapter: chapterForQuery,
+      mcq: newMCQ,
+      createdAt: new Date()
+    });
+    console.log(`Generated and saved 1 new MCQ for buffer, userId=${userId}, category=${category}, chapter=${chapter || 'entire-book'}`);
+  } catch (error) {
+    console.error(`Error generating buffer MCQ for category=${category}, userId=${userId}:`, error.message);
   } finally {
-    releaseLock(threadId);
+    releaseLock(bufferThreadId);
   }
 }
   } catch (error) {
