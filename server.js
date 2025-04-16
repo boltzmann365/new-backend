@@ -862,161 +862,60 @@ const getFullChapterName = (chapterKey, category) => {
   return chapterKey;
 };
 
-app.post("/ask", async (req, res) => {
+// Generate MCQs with retry logic
+async function generateMCQs(query, category, userId, count, chapter, retryCount = 0) {
+  const maxRetries = 2;
+  let threadId = userThreads.get(userId);
+  if (!threadId) {
+    const thread = await openai.beta.threads.create();
+    threadId = thread.id;
+    userThreads.set(userId, threadId);
+  }
+
+  await acquireLock(threadId);
+
   try {
-    if (!req.body) {
-      throw new Error("Request body is missing or invalid.");
-    }
-
-    const { query, category, userId, count = 1 } = req.body;
-
-    if (!query || !category || !userId) {
-      throw new Error("Missing required fields: query, category, or userId.");
-    }
-
-    if (!categoryToBookMap[category]) {
-      throw new Error(`Invalid category: ${category}. Please provide a valid subject category.`);
-    }
+    await waitForAllActiveRuns(threadId);
 
     const bookInfo = categoryToBookMap[category];
     const fileId = bookInfo.fileId;
+    const bookName = bookInfo.bookName;
 
-   // Check MongoDB pool
-let mcqs = [];
-let chapterForQuery;
-if (mongoConnected) {
-  // Extract full chapter name for Economy
-  const chapterMatch = category === "Economy" 
-    ? query.match(/Generate \d+ MCQ from (.*?)\s*of\s*(?:the\s*)?Ramesh Singh Indian Economy Book/i)
-    : query.match(/Generate \d+ MCQ from (.*?) of the/);
-  chapterForQuery = chapterMatch ? chapterMatch[1].trim() : "entire-book";
-  console.log(`Checking MongoDB for ${count} MCQ${count > 1 ? 's' : ''}, book: ${bookInfo.bookName}, category: ${category}, chapter: ${chapterForQuery}`);
-  mcqs = await db.collection("mcqs").aggregate([
-    {
-      $match: {
-        book: bookInfo.bookName,
-        category,
-        chapter: chapterForQuery
-      }
-    },
-    { $sample: { size: count } }
-  ]).toArray();
-  console.log(`Found ${mcqs.length} cached MCQ${mcqs.length !== 1 ? 's' : ''} for chapter: ${chapterForQuery}`);
-} else {
-  console.warn("MongoDB not connected, skipping cache check");
-  chapterForQuery = query.match(/Generate \d+ MCQ from (.*?) of the/) ? query.match(/Generate \d+ MCQ from (.*?) of the/)[1].trim() : "entire-book";
-}
+    console.log(`Generating ${count} MCQ${count > 1 ? 's' : ''}: category=${category}, userId=${userId}, chapter=${chapter || 'entire-book'}`);
 
-// Return cached MCQs if available
-if (mcqs.length >= count) {
-  console.log(`Returning ${mcqs.length} cached MCQ${mcqs.length > 1 ? 's' : ''} for category=${category}, userId=${userId}`);
-  res.json({ answers: count === 1 ? mcqs[0].mcq : mcqs.map(m => m.mcq) });
-} else {
-  // If not enough cached MCQs, proceed to generation below
-  console.log(`Not enough cached MCQs (${mcqs.length}/${count}), proceeding to generate`);
-}
-
-// Generate additional MCQ for buffer replenishment if count=1
-if (count === 1 && mongoConnected && mcqs.length >= count) {
-  let bufferThreadId = userThreads.get(`buffer-${userId}`);
-  if (!bufferThreadId) {
-    const thread = await openai.beta.threads.create();
-    bufferThreadId = thread.id;
-    userThreads.set(`buffer-${userId}`, bufferThreadId);
-  }
-
-  await acquireLock(bufferThreadId);
-
-  try {
-    await waitForAllActiveRuns(bufferThreadId);
-
-    console.log(`Processing request to generate 1 new MCQ for buffer: category=${category}, userId=${userId}, query=${query}`);
-
-    // Match chapter for generation
-    let chapterMatch;
-    if (category === "Polity") {
-      chapterMatch = query.match(/Generate \d+ MCQ from (.*?)\s*of\s*(?:the\s*)?Laxmikanth'?s?\s*Indian\s*Polity\s*book/i);
-    } else if (category === "IndianGeography") {
-      chapterMatch = query.match(/Generate \d+ MCQ from (.*?) of the (?:.*Indian Geography Book|NCERT Class 11th Indian Geography)/i);
-    } else if (category === "FundamentalGeography") {
-      chapterMatch = query.match(/Generate \d+ MCQ from (.*?) of the (?:.*Fundamental Geography Book|NCERT Class 11th Fundamentals of Physical Geography)/i);
-    } else if (category === "ArtAndCulture") {
-      chapterMatch = query.match(/Generate \d+ MCQ from (.*?) of the (?:.*Art and Culture Book|Nitin Singhania Art and Culture Book)/i);
-    } else if (category === "Atlas") {
-      chapterMatch = query.match(/Generate \d+ MCQ from (.*?) of the Atlas Book/i);
-    } else if (category === "Science") {
-      chapterMatch = query.match(/Generate \d+ MCQ from (.*?) of the (?:.*Science Book|Disha IAS Previous Year Papers)/i);
-    } else if (category === "PreviousYearPapers") {
-      chapterMatch = query.match(/Generate \d+ MCQ from (.*?) of the Disha Publication’s UPSC Prelims Previous Year Papers/i);
-    } else if (category === "Economy") {
-      chapterMatch = query.match(/Generate \d+ MCQ from (.*?)\s*of\s*(?:the\s*)?Ramesh Singh Indian Economy Book/i);
-    } else {
-      chapterMatch = query.match(new RegExp(`Generate \\d+ MCQ from (.*?) of the ${bookInfo.bookName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i'));
-    }
-    let chapter = chapterMatch ? chapterMatch[1].trim() : null;
-    console.log(`Extracted chapter: ${chapter}`);
-
-    // Normalize chapter name for Polity
+    // Normalize chapter name
+    let selectedChapter = chapter;
     if (category === "Polity" && chapter) {
       const cleanChapter = chapter.replace(/^Chapter\s*\d+\s*/i, "").trim();
       const fullChapterName = Object.keys(chapterToUnitMap).find(
         (key) => key.toLowerCase() === cleanChapter.toLowerCase()
       );
-      chapter = fullChapterName ? getFullChapterName(fullChapterName, category) : chapter;
-      console.log(`Normalized chapter: ${chapter}`);
-    }
-
-    // Normalize chapter name for Economy
-    if (category === "Economy" && chapter) {
+      selectedChapter = fullChapterName ? getFullChapterName(fullChapterName, category) : chapter;
+    } else if (category === "Economy" && chapter) {
       const fullChapterName = Object.keys(chapterToUnitMap).find(
         (key) => chapter.toLowerCase().includes(key.toLowerCase())
       );
-      chapter = fullChapterName ? getFullChapterName(fullChapterName, category) : chapter;
-      console.log(`Normalized chapter for Economy: ${chapter}`);
+      selectedChapter = fullChapterName ? getFullChapterName(fullChapterName, category) : chapter;
     }
 
     const userIdParts = userId.split('-');
     const questionIndex = userIdParts.length > 1 ? parseInt(userIdParts[userIdParts.length - 1], 10) : 0;
     const baseUserId = userIdParts.slice(0, -1).join('-');
-    const questionCountKey = `${baseUserId}:${chapter || 'entire-book'}`;
+    const questionCountKey = `${baseUserId}:${selectedChapter || 'entire-book'}`;
     let questionCount = questionCounts.get(questionCountKey) || 0;
     questionCount++;
     questionCounts.set(questionCountKey, questionCount);
 
-    console.log(`Request details: userId=${userId}, category=${category}, chapter=${chapter || 'entire-book'}, questionCount=${questionCount}`);
-
     let themes;
-    let selectedChapter = chapter;
     if (category === "Atlas") {
-      console.log(`Atlas file pending, using fallback themes for chapter: ${chapter}`);
-      themes = [`Theme: General Geography - Subtheme: ${chapter || 'Atlas Content'} - Sub-subtheme: Concepts`];
-      selectedChapter = chapter || "entire-book";
+      themes = [`Theme: General Geography - Subtheme: ${selectedChapter || 'Atlas Content'} - Sub-subtheme: Concepts`];
     } else {
       const allThemes = await loadThemes(category);
-      if (!chapter) {
-        console.warn(`No chapter specified, selecting random chapter for ${category}`);
-        const availableChapters = Object.keys(allThemes).filter(ch => ch !== "entire-book");
-        if (availableChapters.length === 0) {
-          throw new Error(`No themes available for ${category}. Please select a specific chapter.`);
-        }
-        const randomChapterIndex = Math.floor(Math.random() * availableChapters.length);
-        selectedChapter = availableChapters[randomChapterIndex];
-        console.log(`Entire Book mode: Selected chapter: ${selectedChapter}`);
-        chapter = getFullChapterName(selectedChapter, category);
-        themes = allThemes[selectedChapter]?.themes;
-        const questionCountKeyForChapter = `${baseUserId}:${chapter}`;
-        questionCount = questionCounts.get(questionCountKeyForChapter) || 0;
-        questionCount++;
-        questionCounts.set(questionCountKeyForChapter, questionCount);
-      } else {
-        selectedChapter = getFullChapterName(chapter, category);
-        themes = allThemes[selectedChapter]?.themes;
-        if (!themes) {
-          console.log(`No themes found for ${selectedChapter} in ${category}. Extracting...`);
-          themes = await extractThemes(bufferThreadId, selectedChapter, fileIds[category], category);
-        }
+      themes = allThemes[selectedChapter]?.themes;
+      if (!themes) {
+        console.log(`No themes found for ${selectedChapter} in ${category}. Extracting...`);
+        themes = await extractThemes(threadId, selectedChapter, fileIds[category], category);
       }
-
       if (!themes || themes.length === 0) {
         throw new Error(`No themes available for ${selectedChapter || 'entire-book'} in ${category}`);
       }
@@ -1054,8 +953,8 @@ if (count === 1 && mongoConnected && mcqs.length >= count) {
         - Description: ${bookInfo.description}  
 
         **Instructions for MCQ Generation:**  
-        - Generate 1 MCQ inspired by the specified chapter ("${chapter || 'entire book'}") of an Atlas, covering comprehensive geographical and thematic data. Use general knowledge and standard geographical references to ensure accuracy and depth.  
-        - **Theme-Based Focus**: Base this MCQ (question ${questionCount}) on the theme: "${selectedTheme}". Interpret the theme broadly to include related subthemes or sub-subthemes relevant to "${chapter || 'entire book'}".  
+        - Generate ${count} MCQ${count > 1 ? 's' : ''} inspired by the specified chapter ("${selectedChapter || 'entire book'}") of an Atlas, covering comprehensive geographical and thematic data. Use general knowledge and standard geographical references to ensure accuracy and depth.  
+        - **Theme-Based Focus**: Base this MCQ (question ${questionCount}) on the theme: "${selectedTheme}". Interpret the theme broadly to include related subthemes or sub-subthemes relevant to "${selectedChapter || 'entire book'}".  
         - **Even Distribution**: Avoid fixating on overused topics (e.g., Mount Everest, Ganga River) unless tied to "${selectedTheme}" in a fresh way.  
         - **Balance Thematic and Fact-Based Questions**: Ensure a 50/50 mix of thematic questions (testing conceptual understanding, e.g., map-making techniques) and fact-based questions (testing specific details, e.g., "The capital of Brazil is..."). Include precise data like geographical features, locations, or statistics where applicable.  
         - **Maximum Complexity and Unpredictability**: Craft challenging, unique MCQs that test deep understanding, critical thinking, and analytical skills at an elite UPSC level. Avoid predictable patterns:
@@ -1065,14 +964,14 @@ if (count === 1 && mongoConnected && mcqs.length >= count) {
         - **Three-Statement Handling**: For "Multiple Statements - How Many Correct" with three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three." Generate questions where "None" can be correct by including deliberately false statements.  
 
         **UPSC Structure to Use:**  
-        - Use the following UPSC structure for the MCQ:  
+        - Use the following UPSC structure for each MCQ:  
           - **Structure Name**: ${selectedStructure.name}  
           - **Example**: ${selectedStructure.example}  
           - **Options**: ${options.join(", ")} (For "Multiple Statements - How Many Correct," adjust to three-statement options if applicable)  
         - Adapt the content to fit this structure creatively and precisely.  
 
         **Response Structure:**  
-        - For the MCQ, use this EXACT structure with PLAIN TEXT headers:  
+        - For each MCQ, use this EXACT structure with PLAIN TEXT headers:  
           Question: [Full question text, following the selected UPSC structure, rich with depth and complexity]  
           Options:  
           (a) [Option A]  
@@ -1082,11 +981,12 @@ if (count === 1 && mongoConnected && mcqs.length >= count) {
           Correct Answer: [Correct option letter, e.g., (a)]  
           Explanation: [Detailed explanation, 3-5 sentences, using general geographical knowledge, justifying the answer with precision and insight. Conclude with: "Thus, the correct answer is [option] because [reason]."]  
         - Separate each section with EXACTLY TWO newlines (\n\n).  
+        - For multiple MCQs, separate each MCQ with "----" on a new line.  
         - Start the response directly with "Question:"—do NOT include any introductory text.  
         - **Special Note for Single Correct Answer Structure**: Include the statements (A-D) directly under the Question text, each statement on a new line.  
         - **Special Note for Multiple Statements Structures**: List the statements under the Question text using decimal numbers (e.g., "1.", "2.", "3.", "4."), each statement on a new line. For three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three."  
 
-        **Now, generate 1 MCQ for "${chapter || 'entire book'}" using the "${selectedStructure.name}" structure, focusing on "${selectedTheme}":**
+        **Now, generate ${count} MCQ${count > 1 ? 's' : ''} for "${selectedChapter || 'entire book'}" using the "${selectedStructure.name}" structure, focusing on "${selectedTheme}":**
       `;
     } else {
       if (!fileId || fileId === "pending" || fileId.startsWith("[TBD")) {
@@ -1103,7 +1003,7 @@ if (count === 1 && mongoConnected && mcqs.length >= count) {
         - Description: ${bookInfo.description}  
 
         **Instructions for MCQ Generation:**  
-        - Generate 1 MCQ inspired by the specified chapter ("${chapter || 'entire book'}") of the book (${bookInfo.bookName}).  
+        - Generate ${count} MCQ${count > 1 ? 's' : ''} inspired by the specified chapter ("${selectedChapter || 'entire book'}") of the book (${bookInfo.bookName}).  
         - **Theme-Based Focus**: Base this MCQ (question ${questionCount}) on the theme: "${selectedTheme}". Use the chapter content (File ID: ${fileId}) as the primary source, but interpret the theme broadly to include related subthemes or sub-subthemes.  
         - **Even Distribution**: Avoid fixating on overused figures or events unless tied to "${selectedTheme}" in a fresh way. For science, avoid overused topics like Newton's laws unless uniquely relevant to "${selectedTheme}".  
         - **Balance Thematic and Fact-Based Questions**: Ensure a 50/50 mix of thematic questions (testing conceptual understanding, e.g., thermodynamics principles) and fact-based questions (testing specific details, e.g., "The atomic number of Carbon is..."). Include precise data like scientific constants, formulas, or discoveries from the chapter where applicable.  
@@ -1114,14 +1014,14 @@ if (count === 1 && mongoConnected && mcqs.length >= count) {
         - **Three-Statement Handling**: For "Multiple Statements - How Many Correct" with three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three." Generate questions where "None" can be correct by including deliberately false statements.  
 
         **UPSC Structure to Use:**  
-        - Use the following UPSC structure for the MCQ:  
+        - Use the following UPSC structure for each MCQ:  
           - **Structure Name**: ${selectedStructure.name}  
           - **Example**: ${selectedStructure.example}  
           - **Options**: ${options.join(", ")} (For "Multiple Statements - How Many Correct," adjust to three-statement options if applicable)  
         - Adapt the deeply researched content to fit this structure creatively and precisely.  
 
         **Response Structure:**  
-        - For the MCQ, use this EXACT structure with PLAIN TEXT headers:  
+        - For each MCQ, use this EXACT structure with PLAIN TEXT headers:  
           Question: [Full question text, following the selected UPSC structure, rich with depth and complexity]  
           Options:  
           (a) [Option A]  
@@ -1131,6 +1031,7 @@ if (count === 1 && mongoConnected && mcqs.length >= count) {
           Correct Answer: [Correct option letter, e.g., (a)]  
           Explanation: [Detailed explanation, 3-5 sentences, weaving chapter content with broader knowledge, justifying the answer with precision and insight. Conclude with: "Thus, the correct answer is [option] because [reason]."]  
         - Separate each section with EXACTLY TWO newlines (\n\n).  
+        - For multiple MCQs, separate each MCQ with "----" on a new line.  
         - Start the response directly with "Question:"—do NOT include any introductory text.  
         - **Special Note for Single Correct Answer Structure**: Include the statements (A-D) directly under the Question text, each statement on a new line.  
         - **Special Note for Multiple Statements Structures**: List the statements under the Question text using decimal numbers (e.g., "1.", "2.", "3.", "4."), each statement on a new line. For three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three."  
@@ -1141,51 +1042,147 @@ if (count === 1 && mongoConnected && mcqs.length >= count) {
         - For "CSAT": Use the CSAT section (File ID: ${fileIds.CSAT}), integrating complex logical extensions.  
         - For "PreviousYearPapers": Base on the entire Disha IAS book (File ID: ${fileIds.PreviousYearPapers}), weaving in advanced interpretations.  
 
-        **Now, generate 1 MCQ based on the book: "${bookInfo.bookName}" (File ID: ${fileId}) using the "${selectedStructure.name}" structure, focusing on "${selectedTheme}" within "${chapter || 'entire book'}":**
+        **Now, generate ${count} MCQ${count > 1 ? 's' : ''} based on the book: "${bookInfo.bookName}" (File ID: ${fileId}) using the "${selectedStructure.name}" structure, focusing on "${selectedTheme}" within "${selectedChapter || 'entire book'}":**
       `;
     }
 
-    await openai.beta.threads.messages.create(bufferThreadId, {
+    await openai.beta.threads.messages.create(threadId, {
       role: "user",
       content: generalInstruction,
     });
 
-    const run = await openai.beta.threads.runs.create(bufferThreadId, {
+    const run = await openai.beta.threads.runs.create(threadId, {
       assistant_id: assistantId,
       tools: category === "Atlas" ? [] : [{ type: "file_search" }],
     });
 
     if (!run || !run.id) {
-      throw new Error("Failed to create AI run for buffer MCQ. Check OpenAI request.");
+      throw new Error("Failed to create AI run. Check OpenAI request.");
     }
 
-    const runStatus = await waitForRunToComplete(bufferThreadId, run.id);
+    const runStatus = await waitForRunToComplete(threadId, run.id);
     if (runStatus === "failed") {
-      throw new Error("AI request for buffer MCQ failed.");
+      throw new Error("AI request failed.");
     }
 
-    const messages = await openai.beta.threads.messages.list(bufferThreadId);
+    const messages = await openai.beta.threads.messages.list(threadId);
     const latestMessage = messages.data.find(m => m.role === "assistant");
     const responseText = latestMessage?.content[0]?.text?.value || "No response available.";
 
-    // Parse response into MCQ
-    const newMCQ = parseSingleMCQ(responseText);
+    // Parse response into MCQs
+    const newMCQs = [];
+    if (count === 1) {
+      newMCQs.push(parseSingleMCQ(responseText));
+    } else {
+      const mcqTexts = responseText.split("----").map(t => t.trim()).filter(t => t);
+      for (const mcqText of mcqTexts) {
+        newMCQs.push(parseSingleMCQ(mcqText));
+      }
+    }
 
-    // Save new MCQ
-    await db.collection("mcqs").insertOne({
-      book: bookInfo.bookName,
-      category,
-      chapter: chapterForQuery,
-      mcq: newMCQ,
-      createdAt: new Date()
-    });
-    console.log(`Generated and saved 1 new MCQ for buffer, userId=${userId}, category=${category}, chapter=${chapter || 'entire-book'}`);
+    // Save new MCQs to MongoDB
+    if (mongoConnected) {
+      for (const mcq of newMCQs) {
+        await db.collection("mcqs").insertOne({
+          book: bookInfo.bookName,
+          category,
+          chapter: selectedChapter || "entire-book",
+          mcq,
+          createdAt: new Date()
+        });
+      }
+      console.log(`Saved ${newMCQs.length} MCQ${newMCQs.length > 1 ? 's' : ''} to MongoDB for category=${category}, chapter=${selectedChapter || 'entire-book'}`);
+    }
+
+    return newMCQs;
   } catch (error) {
-    console.error(`Error generating buffer MCQ for category=${category}, userId=${userId}:`, error.message);
+    console.error(`Error generating ${count} MCQs for category=${category}, userId=${userId}, retry=${retryCount}:`, error.message);
+    if (retryCount < maxRetries) {
+      console.log(`Retrying MCQ generation, attempt ${retryCount + 2}/${maxRetries + 1}`);
+      return await generateMCQs(query, category, userId, count, chapter, retryCount + 1);
+    }
+    throw error;
   } finally {
-    releaseLock(bufferThreadId);
+    releaseLock(threadId);
   }
 }
+
+app.post("/ask", async (req, res) => {
+  try {
+    if (!req.body) {
+      throw new Error("Request body is missing or invalid.");
+    }
+
+    const { query, category, userId, count = 1 } = req.body;
+
+    if (!query || !category || !userId) {
+      throw new Error("Missing required fields: query, category, or userId.");
+    }
+
+    if (!categoryToBookMap[category]) {
+      throw new Error(`Invalid category: ${category}. Please provide a valid subject category.`);
+    }
+
+    const bookInfo = categoryToBookMap[category];
+    const bookName = bookInfo.bookName;
+
+    // Extract chapter
+    const chapterMatch = category === "Economy" 
+      ? query.match(/Generate \d+ MCQ from (.*?)\s*of\s*(?:the\s*)?Ramesh Singh Indian Economy Book/i)
+      : query.match(/Generate \d+ MCQ from (.*?) of the/);
+    const chapterForQuery = chapterMatch ? chapterMatch[1].trim() : "entire-book";
+
+    console.log(`Processing /ask request: category=${category}, userId=${userId}, count=${count}, chapter=${chapterForQuery}`);
+
+    // Scenario 1: Check for cached MCQs
+    let mcqs = [];
+    if (mongoConnected) {
+      console.log(`Checking MongoDB for ${count} MCQ${count > 1 ? 's' : ''}, book: ${bookName}, category: ${category}, chapter: ${chapterForQuery}`);
+      mcqs = await db.collection("mcqs").aggregate([
+        {
+          $match: {
+            book: bookName,
+            category,
+            chapter: chapterForQuery
+          }
+        },
+        { $sample: { size: count } }
+      ]).toArray();
+      console.log(`Found ${mcqs.length} cached MCQ${mcqs.length !== 1 ? 's' : ''} for chapter: ${chapterForQuery}`);
+    } else {
+      console.warn("MongoDB not connected, proceeding to generation");
+    }
+
+    // If not enough MCQs (Scenario 1: no cache or insufficient)
+    if (mcqs.length < count && mongoConnected) {
+      console.log(`Insufficient cached MCQs (${mcqs.length}/${count}), generating ${count} MCQs`);
+      const neededCount = count;
+      const newMCQs = await generateMCQs(query, category, userId, neededCount, chapterForQuery);
+
+      // Re-check MongoDB after generation
+      mcqs = await db.collection("mcqs").aggregate([
+        {
+          $match: {
+            book: bookName,
+            category,
+            chapter: chapterForQuery
+          }
+        },
+        { $sample: { size: count } }
+      ]).toArray();
+      console.log(`After generation, found ${mcqs.length} cached MCQ${mcqs.length !== 1 ? 's' : ''} for chapter: ${chapterForQuery}`);
+    }
+
+    // Return MCQs
+    if (mcqs.length >= count) {
+      console.log(`Returning ${mcqs.length} cached MCQ${mcqs.length > 1 ? 's' : ''} for category=${category}, userId=${userId}`);
+      res.json({ answers: count === 1 ? mcqs[0].mcq : mcqs.map(m => m.mcq) });
+      return;
+    }
+
+    // Fallback if still insufficient after generation
+    console.error(`Failed to retrieve or generate ${count} MCQs for category=${category}, chapter=${chapterForQuery}`);
+    res.status(500).json({ error: "Failed to retrieve or generate MCQs", details: "Insufficient MCQs available after generation" });
   } catch (error) {
     console.error(`Error in /ask endpoint for category=${req.body.category || 'unknown'}:`, {
       message: error.message,
@@ -1193,45 +1190,45 @@ if (count === 1 && mongoConnected && mcqs.length >= count) {
     });
     res.status(500).json({ error: "AI service error", details: error.message });
   }
-
-  function parseSingleMCQ(rawResponse) {
-    const normalized = rawResponse.replace(/\r\n/g, "\n");
-    const sections = normalized.split(/\n\n/).map(s => s.trim()).filter(s => s);
-    const questionIndex = sections.findIndex(s => s.startsWith("Question:"));
-    const optionsIndex = sections.findIndex(s => s.startsWith("Options:"));
-    const correctAnswerIndex = sections.findIndex(s => s.startsWith("Correct Answer:"));
-    const explanationIndex = sections.findIndex(s => s.startsWith("Explanation:"));
-    let questionLines = [];
-    if (questionIndex !== -1) {
-      const endIndex = optionsIndex !== -1 ? optionsIndex :
-                      correctAnswerIndex !== -1 ? correctAnswerIndex :
-                      explanationIndex !== -1 ? explanationIndex : sections.length;
-      questionLines = sections.slice(questionIndex, endIndex).join("\n").split("\n");
-    }
-    const question = questionLines.length > 0
-      ? questionLines.join("\n").replace("Question: ", "").split("\n").map(l => l.trim()).filter(l => l)
-      : [];
-    let optionsSection = "";
-    if (optionsIndex !== -1) {
-      optionsSection = sections.slice(optionsIndex, correctAnswerIndex !== -1 ? correctAnswerIndex : explanationIndex !== -1 ? explanationIndex : sections.length).join("\n");
-    }
-    const optionsLines = optionsSection.split("\n").map(l => l.trim()).filter(l => l && !l.startsWith("Options:"));
-    const options = {};
-    optionsLines.forEach(line => {
-      const match = line.match(/^\((a|b|c|d)\)\s*(.+)$/i);
-      if (match) options[match[1].toUpperCase()] = match[2].trim();
-    });
-    const correctAnswerLine = correctAnswerIndex !== -1 ? sections[correctAnswerIndex] : null;
-    const correctAnswerText = correctAnswerLine ? correctAnswerLine.split("\n")[0] : "";
-    const correctAnswerMatch = correctAnswerText.match(/Correct Answer:\s*\(([a-d])\)/i);
-    const correctAnswer = correctAnswerMatch ? correctAnswerMatch[1].toUpperCase() : null;
-    const explanationLines = explanationIndex !== -1 ? sections.slice(explanationIndex) : [];
-    const explanation = explanationLines.length > 0
-      ? explanationLines.join(" ").replace("Explanation: ", "").trim()
-      : `The correct answer is ${correctAnswer}.`;
-    return { question, options, correctAnswer, explanation };
-  }
 });
+
+function parseSingleMCQ(rawResponse) {
+  const normalized = rawResponse.replace(/\r\n/g, "\n");
+  const sections = normalized.split(/\n\n/).map(s => s.trim()).filter(s => s);
+  const questionIndex = sections.findIndex(s => s.startsWith("Question:"));
+  const optionsIndex = sections.findIndex(s => s.startsWith("Options:"));
+  const correctAnswerIndex = sections.findIndex(s => s.startsWith("Correct Answer:"));
+  const explanationIndex = sections.findIndex(s => s.startsWith("Explanation:"));
+  let questionLines = [];
+  if (questionIndex !== -1) {
+    const endIndex = optionsIndex !== -1 ? optionsIndex :
+                    correctAnswerIndex !== -1 ? correctAnswerIndex :
+                    explanationIndex !== -1 ? explanationIndex : sections.length;
+    questionLines = sections.slice(questionIndex, endIndex).join("\n").split("\n");
+  }
+  const question = questionLines.length > 0
+    ? questionLines.join("\n").replace("Question: ", "").split("\n").map(l => l.trim()).filter(l => l)
+    : [];
+  let optionsSection = "";
+  if (optionsIndex !== -1) {
+    optionsSection = sections.slice(optionsIndex, correctAnswerIndex !== -1 ? correctAnswerIndex : explanationIndex !== -1 ? explanationIndex : sections.length).join("\n");
+  }
+  const optionsLines = optionsSection.split("\n").map(l => l.trim()).filter(l => l && !l.startsWith("Options:"));
+  const options = {};
+  optionsLines.forEach(line => {
+    const match = line.match(/^\((a|b|c|d)\)\s*(.+)$/i);
+    if (match) options[match[1].toUpperCase()] = match[2].trim();
+  });
+  const correctAnswerLine = correctAnswerIndex !== -1 ? sections[correctAnswerIndex] : null;
+  const correctAnswerText = correctAnswerLine ? correctAnswerLine.split("\n")[0] : "";
+  const correctAnswerMatch = correctAnswerText.match(/Correct Answer:\s*\(([a-d])\)/i);
+  const correctAnswer = correctAnswerMatch ? correctAnswerMatch[1].toUpperCase() : null;
+  const explanationLines = explanationIndex !== -1 ? sections.slice(explanationIndex) : [];
+  const explanation = explanationLines.length > 0
+    ? explanationLines.join(" ").replace("Explanation: ", "").trim()
+    : `The correct answer is ${correctAnswer}.`;
+  return { question, options, correctAnswer, explanation };
+}
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, "0.0.0.0", () => console.log(`Backend running on port ${PORT}`));
