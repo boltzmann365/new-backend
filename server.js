@@ -220,10 +220,7 @@ const extractThemes = async (threadId, chapter, fileId, category) => {
       Analyze the content of "${chapter}" from Laxmikanth's Indian Polity book (File ID: ${fileId}). Extract a comprehensive list of themes, subthemes, and sub-subthemes covering its full scope, focusing on the historical development of the Indian Constitution, colonial administration, and legislative reforms. Examples include: colonial rule (e.g., Regulating Act 1773, Pitt’s India Act), Government of India Acts (e.g., 1858, 1919, 1935), Indian National Movement (e.g., INC formation, Simon Commission), and constitutional developments (e.g., Cripps Mission, Cabinet Mission). Provide the list in a simple format: "Theme: [theme] - Subtheme: [subtheme] - Sub-subtheme: [sub-subtheme]". Ensure all major aspects are included, and prioritize explicit topics from the chapter. Return only the list, no additional text.
     `;
   } else {
-    themeInstruction Tense: Present
-Voice: Active
-Mood: Imperative
-    = `
+    themeInstruction = `
       Analyze the content of "${chapter}" from the ${categoryToBookMap[category].bookName} (File ID: ${fileId}). Extract a comprehensive list of themes, subthemes, and sub-subthemes covering its full scope (e.g., invasions, governance, culture, economy, dynasties, decline for history; physiography, climate, drainage for geography; mechanics, thermodynamics for physics). Provide the list in a simple format: "Theme: [theme] - Subtheme: [subtheme] - Sub-subtheme: [sub-subtheme]". Ensure all major aspects are included, and use your understanding to identify both explicit and implicit topics. Return only the list, no additional text.
     `;
   }
@@ -1045,7 +1042,7 @@ async function generateMCQs(query, category, userId, count, chapter, retryCount 
         - Separate each section with EXACTLY TWO newlines (\n\n).  
         - For multiple MCQs, separate each MCQ with "----" on a new line.  
         - Start the response directly with "Question:"—do NOT include any introductory text.  
-        - **Special Note for Single Correct Answer Structure**: Include the statements (A-D) directly under the Question text, each statement on a new line.  
+        - **Special Note for Single Correct Answer Structure**: Include the statementstron: include the statements (A-D) directly under the Question text, each statement on a new line.  
         - **Special Note for Multiple Statements Structures**: List the statements under the Question text using decimal numbers (e.g., "1.", "2.", "3.", "4."), each statement on a new line. For three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three."  
 
         **Special Instructions for Specific Categories:**  
