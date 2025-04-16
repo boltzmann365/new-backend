@@ -96,7 +96,7 @@ const categoryToBookMap = {
     description: "Spectrum book for Modern Indian History"
   },
   ArtAndCulture: {
-    bookName: "Nitin Singhania Art myocardial infarction and Culture Book",
+    bookName: "Nitin Singhania Art and Culture Book",
     fileId: fileIds.ArtAndCulture,
     description: "Nitin Singhania book for Indian Art and Culture"
   },
@@ -220,7 +220,10 @@ const extractThemes = async (threadId, chapter, fileId, category) => {
       Analyze the content of "${chapter}" from Laxmikanth's Indian Polity book (File ID: ${fileId}). Extract a comprehensive list of themes, subthemes, and sub-subthemes covering its full scope, focusing on the historical development of the Indian Constitution, colonial administration, and legislative reforms. Examples include: colonial rule (e.g., Regulating Act 1773, Pitt’s India Act), Government of India Acts (e.g., 1858, 1919, 1935), Indian National Movement (e.g., INC formation, Simon Commission), and constitutional developments (e.g., Cripps Mission, Cabinet Mission). Provide the list in a simple format: "Theme: [theme] - Subtheme: [subtheme] - Sub-subtheme: [sub-subtheme]". Ensure all major aspects are included, and prioritize explicit topics from the chapter. Return only the list, no additional text.
     `;
   } else {
-    themeInstruction = `
+    themeInstruction Tense: Present
+Voice: Active
+Mood: Imperative
+    = `
       Analyze the content of "${chapter}" from the ${categoryToBookMap[category].bookName} (File ID: ${fileId}). Extract a comprehensive list of themes, subthemes, and sub-subthemes covering its full scope (e.g., invasions, governance, culture, economy, dynasties, decline for history; physiography, climate, drainage for geography; mechanics, thermodynamics for physics). Provide the list in a simple format: "Theme: [theme] - Subtheme: [subtheme] - Sub-subtheme: [sub-subtheme]". Ensure all major aspects are included, and use your understanding to identify both explicit and implicit topics. Return only the list, no additional text.
     `;
   }
@@ -900,7 +903,7 @@ async function generateMCQs(query, category, userId, count, chapter, retryCount 
         (key) => key.toLowerCase() === cleanChapter.toLowerCase()
       );
       selectedChapter = fullChapterName ? getFullChapterName(fullChapterName, category) : chapter;
-    } else if (category === "Economy" && chapter) {
+    } else if (category === "Economy" && chapter && chapter !== "entire-book") {
       const fullChapterName = Object.keys(chapterToUnitMap).find(
         (key) => chapter.toLowerCase().includes(key.toLowerCase())
       );
@@ -1133,21 +1136,97 @@ app.post("/ask", async (req, res) => {
     const bookInfo = categoryToBookMap[category];
     const bookName = bookInfo.bookName;
 
-    const chapterMatch = category === "Economy" 
-      ? query.match(/Generate \d+ MCQ from (.*?)\s*of\s*(?:the\s*)?Ramesh Singh Indian Economy Book/i)
-      : query.match(/Generate \d+ MCQ from (.*?) of the/);
-    const chapterForQuery = chapterMatch ? chapterMatch[1].trim() : "entire-book";
+    let chapterForQuery;
+    if (category === "Economy") {
+      const chapterMatch = query.match(/Generate \d+ MCQ from (.*?)\s*of\s*(?:the\s*)?Ramesh Singh Indian Economy Book/i);
+      chapterForQuery = chapterMatch ? chapterMatch[1].trim() : "entire-book";
+    } else {
+      const chapterMatch = query.match(/Generate \d+ MCQ from (.*?) of the/);
+      chapterForQuery = chapterMatch ? chapterMatch[1].trim() : "entire-book";
+    }
 
     console.log(`Processing /ask request: category=${category}, userId=${userId}, count=${count}, chapter=${chapterForQuery}, forceGenerate=${forceGenerate}`);
 
     let mcqs = [];
 
-    // Handle forceGenerate for count=1 (Next button clicks)
+    // Handle Entire Book mode
+    if (chapterForQuery === "entire-book" && mongoConnected) {
+      // Load chapters with saved themes
+      const allThemes = await loadThemes(category);
+      const availableChapters = Object.keys(allThemes).filter(ch => ch !== "entire-book");
+      if (availableChapters.length === 0) {
+        console.error("No chapters with saved themes available for entire-book mode");
+        return res.status(400).json({ error: "No chapters with saved themes available" });
+      }
+
+      if (forceGenerate && count === 1) {
+        // Generate new MCQ for "Next" click
+        console.log(`Force generating 1 new MCQ for entire-book mode`);
+        const randomChapter = availableChapters[Math.floor(Math.random() * availableChapters.length)];
+        const queryForChapter = `Generate 1 MCQ from ${randomChapter} of the Ramesh Singh Indian Economy Book. Use the chapter content as the primary source, supplemented by internet resources and general knowledge to ensure uniqueness and depth.`;
+        const newMCQs = await generateMCQs(queryForChapter, category, userId, 1, randomChapter);
+
+        // Fetch the latest MCQ for the selected chapter
+        mcqs = await db.collection("mcqs").find({
+          book: bookName,
+          category,
+          chapter: randomChapter
+        }).sort({ createdAt: -1 }).limit(1).toArray();
+        
+        console.log(`After forced generation, returning 1 latest MCQ for chapter: ${randomChapter}`);
+        res.json({ answers: mcqs[0].mcq });
+        return;
+      } else {
+        // Fetch cached MCQs from random chapters
+        console.log(`Fetching ${count} cached MCQs for entire-book mode`);
+        const selectedChapters = [];
+        while (selectedChapters.length < count && availableChapters.length > 0) {
+          const randomIndex = Math.floor(Math.random() * availableChapters.length);
+          selectedChapters.push(availableChapters.splice(randomIndex, 1)[0]);
+        }
+
+        for (const chapter of selectedChapters) {
+          const chapterMCQs = await db.collection("mcqs").aggregate([
+            {
+              $match: {
+                book: bookName,
+                category,
+                chapter
+              }
+            },
+            { $sample: { size: 1 } }
+          ]).toArray();
+          mcqs = mcqs.concat(chapterMCQs);
+        }
+
+        if (mcqs.length < count) {
+          console.log(`Insufficient cached MCQs (${mcqs.length}/${count}) for entire-book mode, generating ${count - mcqs.length} MCQs`);
+          const neededCount = count - mcqs.length;
+          for (let i = 0; i < neededCount; i++) {
+            const randomChapter = availableChapters.length > 0 
+              ? availableChapters[Math.floor(Math.random() * availableChapters.length)]
+              : selectedChapters[Math.floor(Math.random() * selectedChapters.length)];
+            const queryForChapter = `Generate 1 MCQ from ${randomChapter} of the Ramesh Singh Indian Economy Book. Use the chapter content as the primary source, supplemented by internet resources and general knowledge to ensure uniqueness and depth.`;
+            const newMCQs = await generateMCQs(queryForChapter, category, userId, 1, randomChapter);
+            mcqs = mcqs.concat(await db.collection("mcqs").find({
+              book: bookName,
+              category,
+              chapter: randomChapter
+            }).sort({ createdAt: -1 }).limit(1).toArray());
+          }
+        }
+
+        console.log(`Returning ${mcqs.length} MCQ${mcqs.length > 1 ? 's' : ''} for entire-book mode, category=${category}, userId=${userId}`);
+        res.json({ answers: count === 1 ? mcqs[0].mcq : mcqs.map(m => m.mcq) });
+        return;
+      }
+    }
+
+    // Handle specific chapter mode
     if (forceGenerate && count === 1 && mongoConnected) {
       console.log(`Force generating 1 new MCQ for chapter: ${chapterForQuery}`);
       const newMCQs = await generateMCQs(query, category, userId, 1, chapterForQuery);
 
-      // Fetch the latest MCQ after generation
       mcqs = await db.collection("mcqs").find({
         book: bookName,
         category,
@@ -1159,7 +1238,6 @@ app.post("/ask", async (req, res) => {
       return;
     }
 
-    // Standard cache check for initial requests or non-forced generation
     if (mongoConnected) {
       console.log(`Checking MongoDB for ${count} MCQ${count > 1 ? 's' : ''}, book: ${bookName}, category: ${category}, chapter: ${chapterForQuery}`);
       mcqs = await db.collection("mcqs").aggregate([
