@@ -96,7 +96,7 @@ const categoryToBookMap = {
     description: "Spectrum book for Modern Indian History"
   },
   ArtAndCulture: {
-    bookName: "Nitin Singhania Art and Culture Book",
+    bookName: "Nitin Singhania Art myocardial infarction and Culture Book",
     fileId: fileIds.ArtAndCulture,
     description: "Nitin Singhania book for Indian Art and Culture"
   },
@@ -1120,7 +1120,7 @@ app.post("/ask", async (req, res) => {
       throw new Error("Request body is missing or invalid.");
     }
 
-    const { query, category, userId, count = 1 } = req.body;
+    const { query, category, userId, count = 1, forceGenerate = false } = req.body;
 
     if (!query || !category || !userId) {
       throw new Error("Missing required fields: query, category, or userId.");
@@ -1138,9 +1138,28 @@ app.post("/ask", async (req, res) => {
       : query.match(/Generate \d+ MCQ from (.*?) of the/);
     const chapterForQuery = chapterMatch ? chapterMatch[1].trim() : "entire-book";
 
-    console.log(`Processing /ask request: category=${category}, userId=${userId}, count=${count}, chapter=${chapterForQuery}`);
+    console.log(`Processing /ask request: category=${category}, userId=${userId}, count=${count}, chapter=${chapterForQuery}, forceGenerate=${forceGenerate}`);
 
     let mcqs = [];
+
+    // Handle forceGenerate for count=1 (Next button clicks)
+    if (forceGenerate && count === 1 && mongoConnected) {
+      console.log(`Force generating 1 new MCQ for chapter: ${chapterForQuery}`);
+      const newMCQs = await generateMCQs(query, category, userId, 1, chapterForQuery);
+
+      // Fetch the latest MCQ after generation
+      mcqs = await db.collection("mcqs").find({
+        book: bookName,
+        category,
+        chapter: chapterForQuery
+      }).sort({ createdAt: -1 }).limit(1).toArray();
+      
+      console.log(`After forced generation, returning 1 latest MCQ for chapter: ${chapterForQuery}`);
+      res.json({ answers: mcqs[0].mcq });
+      return;
+    }
+
+    // Standard cache check for initial requests or non-forced generation
     if (mongoConnected) {
       console.log(`Checking MongoDB for ${count} MCQ${count > 1 ? 's' : ''}, book: ${bookName}, category: ${category}, chapter: ${chapterForQuery}`);
       mcqs = await db.collection("mcqs").aggregate([
