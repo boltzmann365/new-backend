@@ -8,36 +8,28 @@ dotenv.config();
 const app = express();
 
 // CORS Configuration
-const corsOptions = {
-  origin: ["https://trainwithme.in", "http://localhost:3000"],
+const allowedOrigins = ["https://trainwithme.in", "http://localhost:3000"];
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, origin || "*");
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
   methods: ["GET", "POST", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true,
-  optionsSuccessStatus: 200 // Ensure preflight returns 200
-};
+  optionsSuccessStatus: 204
+}));
 
-// Apply CORS middleware first
-app.use(cors(corsOptions));
-
-// Handle preflight OPTIONS requests explicitly
-app.options("*", cors(corsOptions), (req, res) => {
-  console.log("Handling OPTIONS request for:", req.headers.origin);
-  res.status(200).end();
-});
-
-// Log response headers for debugging
+// Log all requests for debugging
 app.use((req, res, next) => {
-  const originalSend = res.send;
-  res.send = function () {
-    console.log("Response headers for", req.path, ":", res.getHeaders());
-    return originalSend.apply(res, arguments);
-  };
+  console.log(`Request: ${req.method} ${req.path}, Origin: ${req.headers.origin}`);
   next();
 });
 
 app.use(express.json());
-
-// ... rest of your server.js code (unchanged) ...
 
 // OpenAI API Setup
 const openai = new OpenAI({
@@ -64,7 +56,6 @@ async function connectToMongoDB() {
     console.log("Connected to MongoDB Atlas");
     db = client.db("trainwithme");
     mongoConnected = true;
-    // Create index for mcqs collection
     await db.collection("mcqs").createIndex({ book: 1, category: 1, chapter: 1 });
   } catch (error) {
     console.error("Failed to connect to MongoDB:", error.message);
@@ -72,7 +63,6 @@ async function connectToMongoDB() {
   }
 }
 
-// Connect to MongoDB when the server starts
 connectToMongoDB();
 
 // File IDs for Reference Books
@@ -903,7 +893,6 @@ async function generateMCQs(query, category, userId, count, chapter, retryCount 
 
     console.log(`Generating ${count} MCQ${count > 1 ? 's' : ''}: category=${category}, userId=${userId}, chapter=${chapter || 'entire-book'}`);
 
-    // Normalize chapter name
     let selectedChapter = chapter;
     if (category === "Polity" && chapter) {
       const cleanChapter = chapter.replace(/^Chapter\s*\d+\s*/i, "").trim();
@@ -1089,7 +1078,6 @@ async function generateMCQs(query, category, userId, count, chapter, retryCount 
     const latestMessage = messages.data.find(m => m.role === "assistant");
     const responseText = latestMessage?.content[0]?.text?.value || "No response available.";
 
-    // Parse response into MCQs
     const newMCQs = [];
     if (count === 1) {
       newMCQs.push(parseSingleMCQ(responseText));
@@ -1100,7 +1088,6 @@ async function generateMCQs(query, category, userId, count, chapter, retryCount 
       }
     }
 
-    // Save new MCQs to MongoDB
     if (mongoConnected) {
       for (const mcq of newMCQs) {
         await db.collection("mcqs").insertOne({
@@ -1146,7 +1133,6 @@ app.post("/ask", async (req, res) => {
     const bookInfo = categoryToBookMap[category];
     const bookName = bookInfo.bookName;
 
-    // Extract chapter
     const chapterMatch = category === "Economy" 
       ? query.match(/Generate \d+ MCQ from (.*?)\s*of\s*(?:the\s*)?Ramesh Singh Indian Economy Book/i)
       : query.match(/Generate \d+ MCQ from (.*?) of the/);
@@ -1154,7 +1140,6 @@ app.post("/ask", async (req, res) => {
 
     console.log(`Processing /ask request: category=${category}, userId=${userId}, count=${count}, chapter=${chapterForQuery}`);
 
-    // Scenario 1: Check for cached MCQs
     let mcqs = [];
     if (mongoConnected) {
       console.log(`Checking MongoDB for ${count} MCQ${count > 1 ? 's' : ''}, book: ${bookName}, category: ${category}, chapter: ${chapterForQuery}`);
@@ -1173,13 +1158,11 @@ app.post("/ask", async (req, res) => {
       console.warn("MongoDB not connected, proceeding to generation");
     }
 
-    // If not enough MCQs (Scenario 1: no cache or insufficient)
     if (mcqs.length < count && mongoConnected) {
       console.log(`Insufficient cached MCQs (${mcqs.length}/${count}), generating ${count} MCQs`);
       const neededCount = count;
       const newMCQs = await generateMCQs(query, category, userId, neededCount, chapterForQuery);
 
-      // Re-check MongoDB after generation
       mcqs = await db.collection("mcqs").aggregate([
         {
           $match: {
@@ -1193,14 +1176,12 @@ app.post("/ask", async (req, res) => {
       console.log(`After generation, found ${mcqs.length} cached MCQ${mcqs.length !== 1 ? 's' : ''} for chapter: ${chapterForQuery}`);
     }
 
-    // Return MCQs
     if (mcqs.length >= count) {
       console.log(`Returning ${mcqs.length} cached MCQ${mcqs.length > 1 ? 's' : ''} for category=${category}, userId=${userId}`);
       res.json({ answers: count === 1 ? mcqs[0].mcq : mcqs.map(m => m.mcq) });
       return;
     }
 
-    // Fallback if still insufficient after generation
     console.error(`Failed to retrieve or generate ${count} MCQs for category=${category}, chapter=${chapterForQuery}`);
     res.status(500).json({ error: "Failed to retrieve or generate MCQs", details: "Insufficient MCQs available after generation" });
   } catch (error) {
