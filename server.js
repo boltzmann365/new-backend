@@ -7,17 +7,37 @@ const { MongoClient } = require("mongodb");
 dotenv.config();
 const app = express();
 
-app.use(
-  cors({
-    origin: ["https://trainwithme.in", "http://localhost:3000"],
-    methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: true,
-  })
-);
+// CORS Configuration
+const corsOptions = {
+  origin: ["https://trainwithme.in", "http://localhost:3000"],
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true,
+  optionsSuccessStatus: 200 // Ensure preflight returns 200
+};
 
-app.options("*", cors());
+// Apply CORS middleware first
+app.use(cors(corsOptions));
+
+// Handle preflight OPTIONS requests explicitly
+app.options("*", cors(corsOptions), (req, res) => {
+  console.log("Handling OPTIONS request for:", req.headers.origin);
+  res.status(200).end();
+});
+
+// Log response headers for debugging
+app.use((req, res, next) => {
+  const originalSend = res.send;
+  res.send = function () {
+    console.log("Response headers for", req.path, ":", res.getHeaders());
+    return originalSend.apply(res, arguments);
+  };
+  next();
+});
+
 app.use(express.json());
+
+// ... rest of your server.js code (unchanged) ...
 
 // OpenAI API Setup
 const openai = new OpenAI({
