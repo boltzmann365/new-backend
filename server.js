@@ -1143,15 +1143,20 @@ app.post("/ask", async (req, res) => {
 
       let mcqs = [];
       if (!forceGenerate && mongoConnected) {
-        // Fetch cached MCQs
+        // Fetch cached MCQs for any chapter of the subject if chapter is "entire-book"
+        const matchQuery = { category: randomSubject };
+        if (chapter !== "entire-book") {
+          matchQuery.chapter = chapter;
+        }
         mcqs = await db.collection("mcqs").aggregate([
-          { $match: { category: randomSubject, chapter: chapter || "entire-book" } },
+          { $match: matchQuery },
           { $sample: { size: count } }
         ]).toArray();
+        console.log(`Found ${mcqs.length} cached MCQ(s) for subject: ${randomSubject}, chapter: ${chapter || 'any'}`);
       }
 
-      if (mcqs.length < count && forceGenerate) {
-        console.log(`Insufficient cached MCQs (${mcqs.length}/${count}), generating ${count - mcqs.length} MCQs`);
+      if (mcqs.length < count) {
+        console.log(`Insufficient cached MCQs (${mcqs.length}/${count}) for subject: ${randomSubject}, generating ${count - mcqs.length} MCQs`);
         const neededCount = count - mcqs.length;
         // Select a random theme
         const themes = await db.collection("book_themes").aggregate([
@@ -1159,12 +1164,16 @@ app.post("/ask", async (req, res) => {
           { $sample: { size: 1 } }
         ]).toArray();
 
+        let selectedTheme, randomChapter;
         if (themes.length === 0) {
-          throw new Error(`No themes available for ${randomSubject}`);
+          console.warn(`No themes available for ${randomSubject}, using default chapter`);
+          randomChapter = Object.keys(chapterToUnitMap).find(key => chapterToUnitMap[key].includes("Chapter 1") && key.includes(randomSubject)) || "Chapter 1";
+          selectedTheme = `Theme: ${randomSubject} - Subtheme: General - Sub-subtheme: Concepts`;
+        } else {
+          selectedTheme = themes[0].themes[Math.floor(Math.random() * themes[0].themes.length)];
+          randomChapter = themes[0].chapter;
         }
 
-        const selectedTheme = themes[0].themes[Math.floor(Math.random() * themes[0].themes.length)];
-        const randomChapter = themes[0].chapter;
         const bookInfo = categoryToBookMap[randomSubject];
         const query = `Generate ${neededCount} MCQ from ${randomChapter} of the ${bookInfo.bookName} based on theme: ${selectedTheme}. Use the chapter content as the primary source, supplemented by internet resources and general knowledge to ensure uniqueness and depth.`;
 
@@ -1182,7 +1191,9 @@ app.post("/ask", async (req, res) => {
         return;
       }
 
-      throw new Error("Insufficient MCQs available after generation");
+      console.error(`Failed to retrieve or generate ${count} MCQs for subject: ${randomSubject}`);
+      res.status(500).json({ error: "Failed to retrieve or generate MCQs", details: `Insufficient MCQs available for ${randomSubject}` });
+      return;
     }
 
     if (!categoryToBookMap[category]) {
