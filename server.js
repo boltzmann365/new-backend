@@ -72,7 +72,7 @@ const fileIds = {
   Spectrum: "file-UwRi9bH3uhVh4YBXNbMv1w",
   ArtAndCulture: "file-Gn3dsACNC2MP2xS9QeN3Je",
   FundamentalGeography: "file-CMWSg6udmgtVZpNS3tDGHW",
-  IndianGeography: "file-U1nQNyCotU2kcSgF6hrarT",
+  IndianGeography: "file-YaaLnGG93PF9DgMsEGcrEN",
   Atlas: "pending",
   Science: "file-TGgc65bHqVMxpmj5ULyR6K",
   Environment: "file-Yb1cfrHMATDNQgyUa6jDqw",
