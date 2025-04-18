@@ -1133,14 +1133,32 @@ app.post("/ask", async (req, res) => {
     const bookInfo = categoryToBookMap[category];
     const bookName = bookInfo.bookName;
 
-    let chapterForQuery;
-    if (category === "Economy") {
-      const chapterMatch = query.match(/Generate \d+ MCQ from (.*?)\s*of\s*(?:the\s*)?Ramesh Singh Indian Economy Book/i);
-      chapterForQuery = chapterMatch ? chapterMatch[1].trim() : "entire-book";
-    } else {
-      const chapterMatch = query.match(/Generate \d+ MCQ from (.*?) of the/);
-      chapterForQuery = chapterMatch ? chapterMatch[1].trim() : "entire-book";
-    }
+    let chapterForQuery = req.body.chapter || "entire-book"; // Use chapter field directly if provided
+if (!chapterForQuery || chapterForQuery === "entire-book") {
+  // Fallback to query parsing if chapter is not provided or is entire-book
+  if (category === "Economy") {
+    const chapterMatch = query.match(/Generate \d+ MCQ from (.*?)\s*of\s*(?:the\s*)?Ramesh Singh Indian Economy Book/i);
+    chapterForQuery = chapterMatch ? chapterMatch[1].trim() : "entire-book";
+  } else if (category === "Polity") {
+    const chapterMatch = query.match(/Generate \d+ MCQ from (.*?)\s*of\s*(?:the\s*)?Laxmikanth['s]* Indian Polity book/i);
+    chapterForQuery = chapterMatch ? chapterMatch[1].trim() : "entire-book";
+  } else {
+    const chapterMatch = query.match(/Generate \d+ MCQ from (.*?)\s*of\s*(?:the\s*)?.*?/i);
+    chapterForQuery = chapterMatch ? chapterMatch[1].trim() : "entire-book";
+  }
+}
+
+// Polity-specific chapter normalization
+if (category === "Polity" && chapterForQuery && chapterForQuery !== "entire-book") {
+  // Handle variations like "Chapter 27: Judicial Review" or "Chapter 27 Judicial Review"
+  const cleanChapter = chapterForQuery.replace(/^Chapter\s*\d+\s*[:\-\s]*/i, "").trim();
+  const fullChapterName = Object.keys(chapterToUnitMap).find(
+    (key) => key.toLowerCase() === cleanChapter.toLowerCase()
+  );
+  selectedChapter = fullChapterName ? getFullChapterName(fullChapterName, category) : chapterForQuery;
+} else {
+  selectedChapter = chapterForQuery;
+}
 
     console.log(`Processing /ask request: category=${category}, userId=${userId}, count=${count}, chapter=${chapterForQuery}, forceGenerate=${forceGenerate}`);
 
