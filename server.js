@@ -57,6 +57,7 @@ async function connectToMongoDB() {
     db = client.db("trainwithme");
     mongoConnected = true;
     await db.collection("mcqs").createIndex({ book: 1, category: 1, chapter: 1 });
+    await db.collection("battleground_rankings").createIndex({ score: -1, date: 1 });
   } catch (error) {
     console.error("Failed to connect to MongoDB:", error.message);
     mongoConnected = false;
@@ -1042,7 +1043,7 @@ async function generateMCQs(query, category, userId, count, chapter, retryCount 
         - Separate each section with EXACTLY TWO newlines (\n\n).  
         - For multiple MCQs, separate each MCQ with "----" on a new line.  
         - Start the response directly with "Question:"—do NOT include any introductory text.  
-        - **Special Note for Single Correct Answer Structure**: Include the statementstron: include the statements (A-D) directly under the Question text, each statement on a new line.  
+        - **Special Note for Single Correct Answer Structure**: Include the statements (A-D) directly under the Question text, each statement on a new line.  
         - **Special Note for Multiple Statements Structures**: List the statements under the Question text using decimal numbers (e.g., "1.", "2.", "3.", "4."), each statement on a new line. For three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three."  
 
         **Special Instructions for Specific Categories:**  
@@ -1120,10 +1121,68 @@ app.post("/ask", async (req, res) => {
       throw new Error("Request body is missing or invalid.");
     }
 
-    const { query, category, userId, count = 1, forceGenerate = false } = req.body;
+    const { query, category, userId, count = 1, forceGenerate = false, chapter, mode } = req.body;
 
-    if (!query || !category || !userId) {
+    if (!userId || (!query && mode !== "battleground") || (mode !== "battleground" && !category)) {
       throw new Error("Missing required fields: query, category, or userId.");
+    }
+
+    if (mode === "battleground") {
+      const subjects = [
+        "Polity",
+        "History",
+        "Geography",
+        "Science",
+        "Environment",
+        "Economy",
+        "CurrentAffairs",
+        "PreviousYearPapers"
+      ];
+      const randomSubject = category || subjects[Math.floor(Math.random() * subjects.length)];
+      console.log(`Battleground mode: Fetching ${count} MCQ(s) for subject: ${randomSubject}`);
+
+      let mcqs = [];
+      if (!forceGenerate && mongoConnected) {
+        // Fetch cached MCQs
+        mcqs = await db.collection("mcqs").aggregate([
+          { $match: { category: randomSubject, chapter: chapter || "entire-book" } },
+          { $sample: { size: count } }
+        ]).toArray();
+      }
+
+      if (mcqs.length < count && forceGenerate) {
+        console.log(`Insufficient cached MCQs (${mcqs.length}/${count}), generating ${count - mcqs.length} MCQs`);
+        const neededCount = count - mcqs.length;
+        // Select a random theme
+        const themes = await db.collection("book_themes").aggregate([
+          { $match: { category: randomSubject } },
+          { $sample: { size: 1 } }
+        ]).toArray();
+
+        if (themes.length === 0) {
+          throw new Error(`No themes available for ${randomSubject}`);
+        }
+
+        const selectedTheme = themes[0].themes[Math.floor(Math.random() * themes[0].themes.length)];
+        const randomChapter = themes[0].chapter;
+        const bookInfo = categoryToBookMap[randomSubject];
+        const query = `Generate ${neededCount} MCQ from ${randomChapter} of the ${bookInfo.bookName} based on theme: ${selectedTheme}. Use the chapter content as the primary source, supplemented by internet resources and general knowledge to ensure uniqueness and depth.`;
+
+        const newMCQs = await generateMCQs(query, randomSubject, userId, neededCount, randomChapter);
+        mcqs = mcqs.concat(await db.collection("mcqs").find({
+          book: bookInfo.bookName,
+          category: randomSubject,
+          chapter: randomChapter
+        }).sort({ createdAt: -1 }).limit(neededCount).toArray());
+      }
+
+      if (mcqs.length >= count) {
+        console.log(`Returning ${mcqs.length} MCQ(s) for Battleground, subject: ${randomSubject}`);
+        res.json({ answers: count === 1 ? mcqs[0].mcq : mcqs.map(m => m.mcq) });
+        return;
+      }
+
+      throw new Error("Insufficient MCQs available after generation");
     }
 
     if (!categoryToBookMap[category]) {
@@ -1133,40 +1192,39 @@ app.post("/ask", async (req, res) => {
     const bookInfo = categoryToBookMap[category];
     const bookName = bookInfo.bookName;
 
-    let chapterForQuery = req.body.chapter || "entire-book"; // Use chapter field directly if provided
-if (!chapterForQuery || chapterForQuery === "entire-book") {
-  // Fallback to query parsing if chapter is not provided or is entire-book
-  if (category === "Economy") {
-    const chapterMatch = query.match(/Generate \d+ MCQ from (.*?)\s*of\s*(?:the\s*)?Ramesh Singh Indian Economy Book/i);
-    chapterForQuery = chapterMatch ? chapterMatch[1].trim() : "entire-book";
-  } else if (category === "Polity") {
-    const chapterMatch = query.match(/Generate \d+ MCQ from (.*?)\s*of\s*(?:the\s*)?Laxmikanth['s]* Indian Polity book/i);
-    chapterForQuery = chapterMatch ? chapterMatch[1].trim() : "entire-book";
-  } else {
-    const chapterMatch = query.match(/Generate \d+ MCQ from (.*?)\s*of\s*(?:the\s*)?.*?/i);
-    chapterForQuery = chapterMatch ? chapterMatch[1].trim() : "entire-book";
-  }
-}
+    let chapterForQuery = req.body.chapter || "entire-book";
+    if (!chapterForQuery || chapterForQuery === "entire-book") {
+      if (category === "Economy") {
+        const chapterMatch = query.match(/Generate \d+ MCQ from (.*?)\s*of\s*(?:the\s*)?Ramesh Singh Indian Economy Book/i);
+        chapterForQuery = chapterMatch ? chapterMatch[1].trim() : "entire-book";
+      } else if (category === "Polity") {
+        const chapterMatch = query.match(/Generate \d+ MCQ from (.*?)\s*of\s*(?:the\s*)?Laxmikanth['s]* Indian Polity book/i);
+        chapterForQuery = chapterMatch ? chapterMatch[1].trim() : "entire-book";
+      } else {
+        const chapterMatch = query.match(/Generate \d+ MCQ from (.*?)\s*of\s*(?:the\s*)?.*?/i);
+        chapterForQuery = chapterMatch ? chapterMatch[1].trim() : "entire-book";
+      }
+    }
 
-// Polity-specific chapter normalization
-if (category === "Polity" && chapterForQuery && chapterForQuery !== "entire-book") {
-  // Handle variations like "Chapter 27: Judicial Review" or "Chapter 27 Judicial Review"
-  const cleanChapter = chapterForQuery.replace(/^Chapter\s*\d+\s*[:\-\s]*/i, "").trim();
-  const fullChapterName = Object.keys(chapterToUnitMap).find(
-    (key) => key.toLowerCase() === cleanChapter.toLowerCase()
-  );
-  selectedChapter = fullChapterName ? getFullChapterName(fullChapterName, category) : chapterForQuery;
-} else {
-  selectedChapter = chapterForQuery;
-}
+    let selectedChapter = chapterForQuery;
+    if (category === "Polity" && chapterForQuery && chapterForQuery !== "entire-book") {
+      const cleanChapter = chapterForQuery.replace(/^Chapter\s*\d+\s*[:\-\s]*/i, "").trim();
+      const fullChapterName = Object.keys(chapterToUnitMap).find(
+        (key) => key.toLowerCase() === cleanChapter.toLowerCase()
+      );
+      selectedChapter = fullChapterName ? getFullChapterName(fullChapterName, category) : chapterForQuery;
+    } else if (category === "Economy" && chapterForQuery && chapterForQuery !== "entire-book") {
+      const fullChapterName = Object.keys(chapterToUnitMap).find(
+        (key) => chapterForQuery.toLowerCase().includes(key.toLowerCase())
+      );
+      selectedChapter = fullChapterName ? getFullChapterName(fullChapterName, category) : chapterForQuery;
+    }
 
     console.log(`Processing /ask request: category=${category}, userId=${userId}, count=${count}, chapter=${chapterForQuery}, forceGenerate=${forceGenerate}`);
 
     let mcqs = [];
 
-    // Handle Entire Book mode
     if (chapterForQuery === "entire-book" && mongoConnected) {
-      // Load chapters with saved themes
       const allThemes = await loadThemes(category);
       const availableChapters = Object.keys(allThemes).filter(ch => ch !== "entire-book");
       if (availableChapters.length === 0) {
@@ -1175,13 +1233,11 @@ if (category === "Polity" && chapterForQuery && chapterForQuery !== "entire-book
       }
 
       if (forceGenerate && count === 1) {
-        // Generate new MCQ for "Next" click
         console.log(`Force generating 1 new MCQ for entire-book mode`);
         const randomChapter = availableChapters[Math.floor(Math.random() * availableChapters.length)];
-        const queryForChapter = `Generate 1 MCQ from ${randomChapter} of the Ramesh Singh Indian Economy Book. Use the chapter content as the primary source, supplemented by internet resources and general knowledge to ensure uniqueness and depth.`;
+        const queryForChapter = `Generate 1 MCQ from ${randomChapter} of the ${bookInfo.bookName}. Use the chapter content as the primary source, supplemented by internet resources and general knowledge to ensure uniqueness and depth.`;
         const newMCQs = await generateMCQs(queryForChapter, category, userId, 1, randomChapter);
 
-        // Fetch the latest MCQ for the selected chapter
         mcqs = await db.collection("mcqs").find({
           book: bookName,
           category,
@@ -1192,7 +1248,6 @@ if (category === "Polity" && chapterForQuery && chapterForQuery !== "entire-book
         res.json({ answers: mcqs[0].mcq });
         return;
       } else {
-        // Fetch cached MCQs from random chapters
         console.log(`Fetching ${count} cached MCQs for entire-book mode`);
         const selectedChapters = [];
         while (selectedChapters.length < count && availableChapters.length > 0) {
@@ -1221,7 +1276,7 @@ if (category === "Polity" && chapterForQuery && chapterForQuery !== "entire-book
             const randomChapter = availableChapters.length > 0 
               ? availableChapters[Math.floor(Math.random() * availableChapters.length)]
               : selectedChapters[Math.floor(Math.random() * selectedChapters.length)];
-            const queryForChapter = `Generate 1 MCQ from ${randomChapter} of the Ramesh Singh Indian Economy Book. Use the chapter content as the primary source, supplemented by internet resources and general knowledge to ensure uniqueness and depth.`;
+            const queryForChapter = `Generate 1 MCQ from ${randomChapter} of the ${bookInfo.bookName}. Use the chapter content as the primary source, supplemented by internet resources and general knowledge to ensure uniqueness and depth.`;
             const newMCQs = await generateMCQs(queryForChapter, category, userId, 1, randomChapter);
             mcqs = mcqs.concat(await db.collection("mcqs").find({
               book: bookName,
@@ -1237,7 +1292,6 @@ if (category === "Polity" && chapterForQuery && chapterForQuery !== "entire-book
       }
     }
 
-    // Handle specific chapter mode
     if (forceGenerate && count === 1 && mongoConnected) {
       console.log(`Force generating 1 new MCQ for chapter: ${chapterForQuery}`);
       const newMCQs = await generateMCQs(query, category, userId, 1, chapterForQuery);
@@ -1305,6 +1359,42 @@ if (category === "Polity" && chapterForQuery && chapterForQuery !== "entire-book
   }
 });
 
+// New leaderboard endpoints
+app.post("/battleground/submit", async (req, res) => {
+  try {
+    const { username, score } = req.body;
+    if (!username || typeof score !== "number") {
+      throw new Error("Missing or invalid username or score");
+    }
+    await db.collection("battleground_rankings").insertOne({
+      username,
+      score,
+      date: new Date()
+    });
+    const rankings = await db.collection("battleground_rankings").find()
+      .sort({ score: -1, date: 1 })
+      .limit(50)
+      .toArray();
+    res.json({ rankings });
+  } catch (error) {
+    console.error("Error in /battleground/submit:", error.message);
+    res.status(500).json({ error: "Failed to submit score", details: error.message });
+  }
+});
+
+app.get("/battleground/leaderboard", async (req, res) => {
+  try {
+    const rankings = await db.collection("battleground_rankings").find()
+      .sort({ score: -1, date: 1 })
+      .limit(50)
+      .toArray();
+    res.json({ rankings });
+  } catch (error) {
+    console.error("Error in /battleground/leaderboard:", error.message);
+    res.status(500).json({ error: "Failed to fetch leaderboard", details: error.message });
+  }
+});
+
 function parseSingleMCQ(rawResponse) {
   const normalized = rawResponse.replace(/\r\n/g, "\n");
   const sections = normalized.split(/\n\n/).map(s => s.trim()).filter(s => s);
@@ -1312,36 +1402,64 @@ function parseSingleMCQ(rawResponse) {
   const optionsIndex = sections.findIndex(s => s.startsWith("Options:"));
   const correctAnswerIndex = sections.findIndex(s => s.startsWith("Correct Answer:"));
   const explanationIndex = sections.findIndex(s => s.startsWith("Explanation:"));
+
   let questionLines = [];
   if (questionIndex !== -1) {
-    const endIndex = optionsIndex !== -1 ? optionsIndex :
-                    correctAnswerIndex !== -1 ? correctAnswerIndex :
-                    explanationIndex !== -1 ? explanationIndex : sections.length;
-    questionLines = sections.slice(questionIndex, endIndex).join("\n").split("\n");
+    if (optionsIndex !== -1) {
+      questionLines = sections.slice(questionIndex, optionsIndex).join("\n").split("\n");
+    } else if (correctAnswerIndex !== -1) {
+      questionLines = sections.slice(questionIndex, correctAnswerIndex).join("\n").split("\n");
+    } else if (explanationIndex !== -1) {
+      questionLines = sections.slice(questionIndex, explanationIndex).join("\n").split("\n");
+    } else {
+      questionLines = sections.slice(questionIndex).join("\n").split("\n");
+    }
   }
+
   const question = questionLines.length > 0
-    ? questionLines.join("\n").replace("Question: ", "").split("\n").map(l => l.trim()).filter(l => l)
+    ? questionLines.join("\n").replace("Question: ", "").split("\n").map(line => line.trim()).filter(line => line)
     : [];
+
   let optionsSection = "";
   if (optionsIndex !== -1) {
-    optionsSection = sections.slice(optionsIndex, correctAnswerIndex !== -1 ? correctAnswerIndex : explanationIndex !== -1 ? explanationIndex : sections.length).join("\n");
+    if (correctAnswerIndex !== -1) {
+      optionsSection = sections.slice(optionsIndex, correctAnswerIndex).join("\n");
+    } else if (explanationIndex !== -1) {
+      optionsSection = sections.slice(optionsIndex, explanationIndex).join("\n");
+    } else {
+      optionsSection = sections.slice(optionsIndex).join("\n");
+    }
   }
-  const optionsLines = optionsSection.split("\n").map(l => l.trim()).filter(l => l && !l.startsWith("Options:"));
+
+  const optionsLines = optionsSection.split("\n").map(line => line.trim()).filter(line => line && !line.startsWith("Options:"));
   const options = {};
   optionsLines.forEach(line => {
     const match = line.match(/^\((a|b|c|d)\)\s*(.+)$/i);
     if (match) options[match[1].toUpperCase()] = match[2].trim();
   });
-  const correctAnswerLine = correctAnswerIndex !== -1 ? sections[correctAnswerIndex] : null;
-  const correctAnswerText = correctAnswerLine ? correctAnswerLine.split("\n")[0] : "";
-  const correctAnswerMatch = correctAnswerText.match(/Correct Answer:\s*\(([a-d])\)/i);
-  const correctAnswer = correctAnswerMatch ? correctAnswerMatch[1].toUpperCase() : null;
-  const explanationLines = explanationIndex !== -1 ? sections.slice(explanationIndex) : [];
+
+  const correctAnswerLine = correctAnswerIndex !== -1 ? sections[correctAnswerIndex] : "";
+  const correctAnswerParts = correctAnswerLine ? correctAnswerLine.split("\n") : [];
+  const correctAnswerText = correctAnswerParts[0] || "";
+  const correctAnswer = correctAnswerText
+    ? correctAnswerText.replace("Correct Answer: ", "").replace("(", "").replace(")", "").trim().toUpperCase()
+    : null;
+
+  const explanationLines = explanationIndex !== -1 ? sections.slice(explanationIndex) : correctAnswerParts.slice(1);
   const explanation = explanationLines.length > 0
     ? explanationLines.join(" ").replace("Explanation: ", "").trim()
     : `The correct answer is ${correctAnswer}.`;
-  return { question, options, correctAnswer, explanation };
+
+  return {
+    question,
+    options,
+    correctAnswer,
+    explanation
+  };
 }
 
+// Start the server
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, "0.0.0.0", () => console.log(`Backend running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
