@@ -1205,11 +1205,37 @@ app.post("/ask", async (req, res) => {
       ];
       const randomSubject = category || subjects[Math.floor(Math.random() * subjects.length)];
       console.log(`Battleground mode: Fetching ${count} MCQ(s) for subject: ${randomSubject}`);
-
+    
+      // Map battleground subjects to possible categoryToBookMap keys (multiple books for History and Geography)
+      const subjectMapping = {
+        Polity: ["Polity"],
+        History: ["Spectrum", "TamilnaduHistory", "ArtAndCulture"], // Multiple books for History
+        Geography: ["FundamentalGeography", "IndianGeography", "Atlas"], // Multiple books for Geography
+        Science: ["Science"],
+        Environment: ["Environment"],
+        Economy: ["Economy"],
+        CurrentAffairs: ["CurrentAffairs"],
+        PreviousYearPapers: ["PreviousYearPapers"]
+      };
+    
+      const possibleSubjects = subjectMapping[randomSubject];
+      if (!possibleSubjects || possibleSubjects.length === 0) {
+        console.error(`Invalid subject mapping for ${randomSubject}`);
+        res.status(400).json({ error: "Invalid subject", details: `Subject ${randomSubject} not supported` });
+        return;
+      }
+    
+      // Randomly select one book/category for History or Geography
+      const mappedSubject = possibleSubjects[Math.floor(Math.random() * possibleSubjects.length)];
+      if (!categoryToBookMap[mappedSubject]) {
+        console.error(`Invalid mapped subject: ${mappedSubject}`);
+        res.status(400).json({ error: "Invalid subject", details: `Mapped subject ${mappedSubject} not supported` });
+        return;
+      }
+    
       let mcqs = [];
       if (!forceGenerate && mongoConnected) {
-        // Fetch cached MCQs for any chapter of the subject if chapter is "entire-book"
-        const matchQuery = { category: randomSubject };
+        const matchQuery = { category: mappedSubject }; // Use mappedSubject for querying
         if (chapter !== "entire-book") {
           matchQuery.chapter = chapter;
         }
@@ -1217,47 +1243,52 @@ app.post("/ask", async (req, res) => {
           { $match: matchQuery },
           { $sample: { size: count } }
         ]).toArray();
-        console.log(`Found ${mcqs.length} cached MCQ(s) for subject: ${randomSubject}, chapter: ${chapter || 'any'}`);
+        console.log(`Found ${mcqs.length} cached MCQ(s) for subject: ${mappedSubject}, chapter: ${chapter || 'any'}`);
       }
-
+    
       if (mcqs.length < count) {
-        console.log(`Insufficient cached MCQs (${mcqs.length}/${count}) for subject: ${randomSubject}, generating ${count - mcqs.length} MCQs`);
+        console.log(`Insufficient cached MCQs (${mcqs.length}/${count}) for subject: ${mappedSubject}, generating ${count - mcqs.length} MCQs`);
         const neededCount = count - mcqs.length;
-        // Select a random theme
         const themes = await db.collection("book_themes").aggregate([
-          { $match: { category: randomSubject } },
+          { $match: { category: mappedSubject } }, // Use mappedSubject for themes
           { $sample: { size: 1 } }
         ]).toArray();
-
+    
         let selectedTheme, randomChapter;
         if (themes.length === 0) {
-          console.warn(`No themes available for ${randomSubject}, using default chapter`);
-          randomChapter = Object.keys(chapterToUnitMap).find(key => chapterToUnitMap[key].includes("Chapter 1") && key.includes(randomSubject)) || "Chapter 1";
-          selectedTheme = `Theme: ${randomSubject} - Subtheme: General - Sub-subtheme: Concepts`;
+          console.warn(`No themes available for ${mappedSubject}, using default chapter`);
+          randomChapter = Object.keys(chapterToUnitMap).find(key => chapterToUnitMap[key].includes("Chapter 1") && key.includes(mappedSubject)) || "Chapter 1";
+          selectedTheme = `Theme: ${mappedSubject} - Subtheme: General - Sub-subtheme: Concepts`;
         } else {
           selectedTheme = themes[0].themes[Math.floor(Math.random() * themes[0].themes.length)];
           randomChapter = themes[0].chapter;
         }
-
-        const bookInfo = categoryToBookMap[randomSubject];
+    
+        const bookInfo = categoryToBookMap[mappedSubject]; // Use mappedSubject to get bookInfo
+        if (!bookInfo) {
+          console.error(`No book info found for mapped subject: ${mappedSubject}`);
+          res.status(500).json({ error: "Failed to generate MCQs", details: `No book info for ${mappedSubject}` });
+          return;
+        }
+    
         const query = `Generate ${neededCount} MCQ from ${randomChapter} of the ${bookInfo.bookName} based on theme: ${selectedTheme}. Use the chapter content as the primary source, supplemented by internet resources and general knowledge to ensure uniqueness and depth.`;
-
-        const newMCQs = await generateMCQs(query, randomSubject, userId, neededCount, randomChapter);
+    
+        const newMCQs = await generateMCQs(query, mappedSubject, userId, neededCount, randomChapter);
         mcqs = mcqs.concat(await db.collection("mcqs").find({
           book: bookInfo.bookName,
-          category: randomSubject,
+          category: mappedSubject,
           chapter: randomChapter
         }).sort({ createdAt: -1 }).limit(neededCount).toArray());
       }
-
+    
       if (mcqs.length >= count) {
-        console.log(`Returning ${mcqs.length} MCQ(s) for Battleground, subject: ${randomSubject}`);
+        console.log(`Returning ${mcqs.length} MCQ(s) for Battleground, subject: ${mappedSubject}`);
         res.json({ answers: count === 1 ? mcqs[0].mcq : mcqs.map(m => m.mcq) });
         return;
       }
-
-      console.error(`Failed to retrieve or generate ${count} MCQs for subject: ${randomSubject}`);
-      res.status(500).json({ error: "Failed to retrieve or generate MCQs", details: `Insufficient MCQs available for ${randomSubject}` });
+    
+      console.error(`Failed to retrieve or generate ${count} MCQs for subject: ${mappedSubject}`);
+      res.status(500).json({ error: "Failed to retrieve or generate MCQs", details: `Insufficient MCQs available for ${mappedSubject}` });
       return;
     }
 
