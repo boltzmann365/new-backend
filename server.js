@@ -80,6 +80,7 @@ async function connectToMongoDB() {
     mongoConnected = true;
     await db.collection("mcqs").createIndex({ book: 1, category: 1, chapter: 1 });
     await db.collection("battleground_rankings").createIndex({ score: -1, date: 1 });
+    await db.collection("users").createIndex({ username: 1 }, { unique: true });
   } catch (error) {
     console.error("Failed to connect to MongoDB:", error.message);
     mongoConnected = false;
@@ -279,6 +280,7 @@ const extractThemes = async (threadId, chapter, fileId, category) => {
 };
 
 // New endpoint to fetch chapters with themes
+// New endpoint to fetch chapters with themes
 app.post("/available-chapters", async (req, res) => {
   try {
     const { category } = req.body;
@@ -291,6 +293,60 @@ app.post("/available-chapters", async (req, res) => {
   } catch (error) {
     console.error(`Error in /available-chapters for category=${req.body.category || 'unknown'}:`, error.message);
     res.status(500).json({ error: "Failed to fetch available chapters", details: error.message });
+  }
+});
+
+// Add endpoint to fetch username
+app.post("/user/username", async (req, res) => {
+  try {
+    const { uid } = req.body;
+    if (!uid) {
+      return res.status(400).json({ error: "Missing user ID" });
+    }
+
+    if (!mongoConnected) {
+      return res.status(500).json({ error: "MongoDB not connected" });
+    }
+
+    const userDoc = await db.collection("users").findOne({ googleId: uid });
+    if (userDoc && userDoc.username) {
+      return res.json({ username: userDoc.username });
+    }
+
+    return res.json({ username: null });
+  } catch (error) {
+    console.error("Error in /user/username:", error.message);
+    res.status(500).json({ error: "Failed to fetch username", details: error.message });
+  }
+});
+
+// Add endpoint to set username
+app.post("/user/set-username", async (req, res) => {
+  try {
+    const { uid, username } = req.body;
+    if (!uid || !username) {
+      return res.status(400).json({ error: "Missing user ID or username" });
+    }
+
+    if (!mongoConnected) {
+      return res.status(500).json({ error: "MongoDB not connected" });
+    }
+
+    const existingUser = await db.collection("users").findOne({ username });
+    if (existingUser) {
+      return res.status(400).json({ error: "Username already taken. Please choose a different one." });
+    }
+
+    await db.collection("users").updateOne(
+      { googleId: uid },
+      { $set: { username, googleId: uid } },
+      { upsert: true }
+    );
+
+    res.json({ message: "Username set successfully" });
+  } catch (error) {
+    console.error("Error in /user/set-username:", error.message);
+    res.status(500).json({ error: "Failed to set username", details: error.message });
   }
 });
 
