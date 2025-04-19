@@ -1065,7 +1065,7 @@ async function generateMCQs(query, category, userId, count, chapter, retryCount 
 
         **Response Structure:**  
         - For each MCQ, use this EXACT structure with PLAIN TEXT headers:  
-          Question: [Full question text, following the selected UPSC structure, rich with depth and complexity]  
+          Question: [Full question text, following the selected UPSC structure, rich with depth and complexity. Do NOT include options or "Options:" in the question text.]  
           Options:  
           (a) [Option A]  
           (b) [Option B]  
@@ -1076,8 +1076,8 @@ async function generateMCQs(query, category, userId, count, chapter, retryCount 
         - Separate each section with EXACTLY TWO newlines (\n\n).  
         - For multiple MCQs, separate each MCQ with "----" on a new line.  
         - Start the response directly with "Question:"—do NOT include any introductory text.  
-        - **Special Note for Single Correct Answer Structure**: Include the statements (A-D) directly under the Question text, each statement on a new line.  
-        - **Special Note for Multiple Statements Structures**: List the statements under the Question text using decimal numbers (e.g., "1.", "2.", "3.", "4."), each statement on a new line. For three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three."  
+        - **Special Note for Single Correct Answer Structure**: Include the statements (A-D) directly under the Question text, each statement on a new line, but ONLY if part of the question (e.g., for matching pairs). Options must still be listed under "Options:".  
+        - **Special Note for Multiple Statements Structures**: List the statements under the Question text using decimal numbers (e.g., "1.", "2.", "3.", "4."), each statement on a new line. Options must be listed under "Options:" as specified. For three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three."  
 
         **Special Instructions for Specific Categories:**  
         - For "Polity": Use the Laxmikanth's Indian Polity book (File ID: ${fileIds.Polity}), ensuring questions cover constitutional framework, governance, and political dynamics comprehensively.  
@@ -1147,11 +1147,27 @@ async function generateMCQs(query, category, userId, count, chapter, retryCount 
       });
     
       if (validMCQs.length < newMCQs.length) {
-        console.warn(`Discarded ${newMCQs.length - validMCQs.length} invalid MCQ(s). Retrying generation...`);
+        console.warn(`Discarded ${newMCQs.length - validMCQs.length} invalid MCQ(s). Fetching cached MCQs as fallback...`);
         const remainingCount = newMCQs.length - validMCQs.length;
         if (remainingCount > 0) {
-          const retryMCQs = await generateMCQs(query, category, userId, remainingCount, chapter, retryCount + 1);
-          return [...validMCQs, ...(retryMCQs.error ? [] : retryMCQs)];
+          // Fetch random cached MCQs as a fallback
+          const fallbackMCQs = await db.collection("mcqs").aggregate([
+            { $match: { category: { $in: Object.keys(categoryToBookMap) } } }, // Match any valid category
+            { $sample: { size: remainingCount } }
+          ]).toArray();
+
+          if (fallbackMCQs.length >= remainingCount) {
+            console.log(`Fetched ${fallbackMCQs.length} cached MCQs as fallback for category: ${category}`);
+            return [...validMCQs, ...fallbackMCQs.map(m => m.mcq)];
+          } else {
+            console.warn(`Insufficient cached MCQs for fallback (${fallbackMCQs.length}/${remainingCount}). Generating new MCQs...`);
+            if (retryCount >= maxRetries) {
+              console.error(`Max retries (${maxRetries}) reached for MCQ generation`);
+              return { error: `Failed to generate valid MCQs after ${maxRetries} retries` };
+            }
+            const retryMCQs = await generateMCQs(query, category, userId, remainingCount - fallbackMCQs.length, chapter, retryCount + 1);
+            return [...validMCQs, ...fallbackMCQs.map(m => m.mcq), ...(retryMCQs.error ? [] : retryMCQs)];
+          }
         }
       }
     
@@ -1205,37 +1221,38 @@ app.post("/ask", async (req, res) => {
       ];
       const randomSubject = category || subjects[Math.floor(Math.random() * subjects.length)];
       console.log(`Battleground mode: Fetching ${count} MCQ(s) for subject: ${randomSubject}`);
-    
+
       // Map battleground subjects to possible categoryToBookMap keys (multiple books for History and Geography)
       const subjectMapping = {
         Polity: ["Polity"],
-        History: ["Spectrum", "TamilnaduHistory", "ArtAndCulture"], // Multiple books for History
-        Geography: ["FundamentalGeography", "IndianGeography", "Atlas"], // Multiple books for Geography
+        History: ["Spectrum", "TamilnaduHistory", "ArtAndCulture"],
+        Geography: ["FundamentalGeography", "IndianGeography", "Atlas"],
         Science: ["Science"],
         Environment: ["Environment"],
         Economy: ["Economy"],
         CurrentAffairs: ["CurrentAffairs"],
         PreviousYearPapers: ["PreviousYearPapers"]
       };
-    
+
       const possibleSubjects = subjectMapping[randomSubject];
       if (!possibleSubjects || possibleSubjects.length === 0) {
         console.error(`Invalid subject mapping for ${randomSubject}`);
         res.status(400).json({ error: "Invalid subject", details: `Subject ${randomSubject} not supported` });
         return;
       }
-    
+
       // Randomly select one book/category for History or Geography
       const mappedSubject = possibleSubjects[Math.floor(Math.random() * possibleSubjects.length)];
+      console.log(`Selected book category for ${randomSubject}: ${mappedSubject}`);
       if (!categoryToBookMap[mappedSubject]) {
         console.error(`Invalid mapped subject: ${mappedSubject}`);
         res.status(400).json({ error: "Invalid subject", details: `Mapped subject ${mappedSubject} not supported` });
         return;
       }
-    
+
       let mcqs = [];
       if (!forceGenerate && mongoConnected) {
-        const matchQuery = { category: mappedSubject }; // Use mappedSubject for querying
+        const matchQuery = { category: mappedSubject };
         if (chapter !== "entire-book") {
           matchQuery.chapter = chapter;
         }
@@ -1245,15 +1262,15 @@ app.post("/ask", async (req, res) => {
         ]).toArray();
         console.log(`Found ${mcqs.length} cached MCQ(s) for subject: ${mappedSubject}, chapter: ${chapter || 'any'}`);
       }
-    
+
       if (mcqs.length < count) {
         console.log(`Insufficient cached MCQs (${mcqs.length}/${count}) for subject: ${mappedSubject}, generating ${count - mcqs.length} MCQs`);
         const neededCount = count - mcqs.length;
         const themes = await db.collection("book_themes").aggregate([
-          { $match: { category: mappedSubject } }, // Use mappedSubject for themes
+          { $match: { category: mappedSubject } },
           { $sample: { size: 1 } }
         ]).toArray();
-    
+
         let selectedTheme, randomChapter;
         if (themes.length === 0) {
           console.warn(`No themes available for ${mappedSubject}, using default chapter`);
@@ -1263,30 +1280,42 @@ app.post("/ask", async (req, res) => {
           selectedTheme = themes[0].themes[Math.floor(Math.random() * themes[0].themes.length)];
           randomChapter = themes[0].chapter;
         }
-    
-        const bookInfo = categoryToBookMap[mappedSubject]; // Use mappedSubject to get bookInfo
+
+        const bookInfo = categoryToBookMap[mappedSubject];
         if (!bookInfo) {
           console.error(`No book info found for mapped subject: ${mappedSubject}`);
           res.status(500).json({ error: "Failed to generate MCQs", details: `No book info for ${mappedSubject}` });
           return;
         }
-    
+
         const query = `Generate ${neededCount} MCQ from ${randomChapter} of the ${bookInfo.bookName} based on theme: ${selectedTheme}. Use the chapter content as the primary source, supplemented by internet resources and general knowledge to ensure uniqueness and depth.`;
-    
+
         const newMCQs = await generateMCQs(query, mappedSubject, userId, neededCount, randomChapter);
-        mcqs = mcqs.concat(await db.collection("mcqs").find({
-          book: bookInfo.bookName,
-          category: mappedSubject,
-          chapter: randomChapter
-        }).sort({ createdAt: -1 }).limit(neededCount).toArray());
+        if (newMCQs.error) {
+          console.error(`Failed to generate new MCQs: ${newMCQs.error}`);
+          // Fetch fallback MCQs if generation fails completely
+          const fallbackMCQs = await db.collection("mcqs").aggregate([
+            { $match: { category: { $in: Object.keys(categoryToBookMap) } } },
+            { $sample: { size: neededCount } }
+          ]).toArray();
+          if (fallbackMCQs.length >= neededCount) {
+            console.log(`Using ${fallbackMCQs.length} cached MCQs as fallback due to generation failure`);
+            mcqs = mcqs.concat(fallbackMCQs.map(m => m.mcq));
+          } else {
+            res.status(500).json({ error: "Failed to generate MCQs", details: newMCQs.error });
+            return;
+          }
+        } else {
+          mcqs = mcqs.concat(newMCQs);
+        }
       }
-    
+
       if (mcqs.length >= count) {
         console.log(`Returning ${mcqs.length} MCQ(s) for Battleground, subject: ${mappedSubject}`);
         res.json({ answers: count === 1 ? mcqs[0].mcq : mcqs.map(m => m.mcq) });
         return;
       }
-    
+
       console.error(`Failed to retrieve or generate ${count} MCQs for subject: ${mappedSubject}`);
       res.status(500).json({ error: "Failed to retrieve or generate MCQs", details: `Insufficient MCQs available for ${mappedSubject}` });
       return;
