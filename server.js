@@ -955,49 +955,60 @@ async function generateMCQs(query, category, userId, count, chapter, retryCount 
     let generalInstruction;
     if (category === "Atlas") {
       generalInstruction = `
-        You are an AI designed to create an elite UPSC training camp for the TrainWithMe platform, delivering diverse, deeply researched, and accurate MCQs that captivate and challenge users. For this query, the Atlas category file is not available, so rely on your extensive training data encompassing vast geographical knowledge and general resources.
+  You are an AI designed to create an elite UPSC training camp for the TrainWithMe platform, delivering diverse, deeply researched, and accurate MCQs that captivate and challenge users. You have access to the uploaded book content (File ID: ${fileId}) and your extensive training data encompassing vast historical, philosophical, cultural, geographical, and scientific knowledge.
 
-        📚 Reference for This Query:  
-        - Category: ${category}  
-        - Book: ${bookInfo.bookName}  
-        - Description: ${bookInfo.description}  
+  📚 Reference Book for This Query:  
+  - Category: ${category}  
+  - Book: ${bookInfo.bookName}  
+  - File ID: ${fileId}  
+  - Description: ${bookInfo.description}  
 
-        **Instructions for MCQ Generation:**  
-        - Generate ${count} MCQ${count > 1 ? 's' : ''} inspired by the specified chapter ("${selectedChapter || 'entire book'}") of an Atlas, covering comprehensive geographical and thematic data. Use general knowledge and standard geographical references to ensure accuracy and depth.  
-        - **Theme-Based Focus**: Base this MCQ (question ${questionCount}) on the theme: "${selectedTheme}". Interpret the theme broadly to include related subthemes or sub-subthemes relevant to "${selectedChapter || 'entire book'}".  
-        - **Even Distribution**: Avoid fixating on overused topics (e.g., Mount Everest, Ganga River) unless tied to "${selectedTheme}" in a fresh way.  
-        - **Balance Thematic and Fact-Based Questions**: Ensure a 50/50 mix of thematic questions (testing conceptual understanding, e.g., map-making techniques) and fact-based questions (testing specific details, e.g., "The capital of Brazil is..."). Include precise data like geographical features, locations, or statistics where applicable.  
-        - **Maximum Complexity and Unpredictability**: Craft challenging, unique MCQs that test deep understanding, critical thinking, and analytical skills at an elite UPSC level. Avoid predictable patterns:
-          - For "Multiple Statements - How Many Correct," ensure correct answers are evenly distributed (e.g., "only one" as likely as "only two" or "only three"). Include subtle distractors and false statements to make "only one" or "none" viable.
-          - For "Assertion and Reason," create nuanced assertions and reasons with complex relationships (e.g., partial truths, misleading reasons) to avoid obvious answers like option A. Vary correct options (a, b, c, d) evenly.
-        - **Accuracy Assurance**: Verify the factual correctness of each question, options, and answer using standard geographical knowledge. The explanation must justify why the correct option is true and others are false.  
-        - **Three-Statement Handling**: For "Multiple Statements - How Many Correct" with three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three." Generate questions where "None" can be correct by including deliberately false statements.  
+  **Instructions for MCQ Generation:**  
+  - Generate ${count} MCQ${count > 1 ? 's' : ''} inspired by the specified chapter ("${selectedChapter || 'entire book'}") of the book (${bookInfo.bookName}).  
+  - **Theme-Based Focus**: Base this MCQ (question ${questionCount}) on the theme: "${selectedTheme}". Use the chapter content (File ID: ${fileId}) as the primary source, but interpret the theme broadly to include related subthemes or sub-subthemes.  
+  - **Even Distribution**: Avoid fixating on overused figures or events unless tied to "${selectedTheme}" in a fresh way. For science, avoid overused topics like Newton's laws unless uniquely relevant to "${selectedTheme}".  
+  - **Balance Thematic and Fact-Based Questions**: Ensure a 50/50 mix of thematic questions (testing conceptual understanding, e.g., thermodynamics principles) and fact-based questions (testing specific details, e.g., "The atomic number of Carbon is..."). Include precise data like scientific constants, formulas, or discoveries from the chapter where applicable.  
+  - **Maximum Complexity and Unpredictability**: Craft challenging, unique MCQs that test deep understanding, critical thinking, and analytical skills at an elite UPSC level. Avoid predictable patterns:
+    - For "Multiple Statements - How Many Correct," ensure correct answers are evenly distributed (e.g., "only one" as likely as "only two" or "only three"). Include subtle distractors and false statements to make "only one" or "none" viable.
+    - For "Assertion and Reason," create nuanced assertions and reasons with complex relationships (e.g., partial truths, misleading reasons) to avoid obvious answers like option A. Vary correct options (a, b, c, d) evenly.
+  - **Accuracy Assurance**: Verify the factual correctness of each question, options, and answer. Cross-check scientific details and ensure the correct option aligns perfectly with the explanation. The explanation must justify why the correct option is true and others are false.  
+  - **Three-Statement Handling**: For "Multiple Statements - How Many Correct" with three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three." Generate questions where "None" can be correct by including deliberately false statements.  
 
-        **UPSC Structure to Use:**  
-        - Use the following UPSC structure for each MCQ:  
-          - **Structure Name**: ${selectedStructure.name}  
-          - **Example**: ${selectedStructure.example}  
-          - **Options**: ${options.join(", ")} (For "Multiple Statements - How Many Correct," adjust to three-statement options if applicable)  
-        - Adapt the content to fit this structure creatively and precisely.  
+  **UPSC Structure to Use:**  
+  - Use the following UPSC structure for each MCQ:  
+    - **Structure Name**: ${selectedStructure.name}  
+    - **Example**: ${selectedStructure.example}  
+    - **Options**: ${options.join(", ")} (For "Multiple Statements - How Many Correct," adjust to three-statement options if applicable)  
+  - Adapt the deeply researched content to fit this structure creatively and precisely.  
 
-        **Response Structure:**  
-        - For each MCQ, use this EXACT structure with PLAIN TEXT headers:  
-          Question: [Full question text, following the selected UPSC structure, rich with depth and complexity]  
-          Options:  
-          (a) [Option A]  
-          (b) [Option B]  
-          (c) [Option C]  
-          (d) [Option D]  
-          Correct Answer: [Correct option letter, e.g., (a)]  
-          Explanation: [Detailed explanation, 3-5 sentences, using general geographical knowledge, justifying the answer with precision and insight. Conclude with: "Thus, the correct answer is [option] because [reason]."]  
-        - Separate each section with EXACTLY TWO newlines (\n\n).  
-        - For multiple MCQs, separate each MCQ with "----" on a new line.  
-        - Start the response directly with "Question:"—do NOT include any introductory text.  
-        - **Special Note for Single Correct Answer Structure**: Include the statements (A-D) directly under the Question text, each statement on a new line.  
-        - **Special Note for Multiple Statements Structures**: List the statements under the Question text using decimal numbers (e.g., "1.", "2.", "3.", "4."), each statement on a new line. For three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three."  
+  **Response Structure:**  
+  - For each MCQ, use this EXACT structure with PLAIN TEXT headers:  
+    Question: [Full question text, following the selected UPSC structure, rich with depth and complexity. Do NOT include options or "Options:" in the question text.]  
+    Options:  
+    (a) [Option A]  
+    (b) [Option B]  
+    (c) [Option C]  
+    (d) [Option D]  
+    Correct Answer: [Correct option letter, e.g., (a)]  
+    Explanation: [Detailed explanation, 3-5 sentences, weaving chapter content with broader knowledge, justifying the answer with precision and insight. Conclude with: "Thus, the correct answer is [option] because [reason]."]  
+  - **Strict Formatting Rules**:
+    - The "Question:" section MUST contain ONLY the question text and any numbered statements (e.g., "1.", "2.", "3.") if applicable. Do NOT include options, "Options:", or any option-related text here.
+    - The "Options:" section MUST list exactly four options labeled (a), (b), (c), (d), each on a new line, with no additional text or labels like "Options:" within the question text.
+    - Ensure all sections are present and correctly formatted, even if it requires rephrasing the question or options to fit the structure.
+  - Separate each section with EXACTLY TWO newlines (\n\n).  
+  - For multiple MCQs, separate each MCQ with "----" on a new line.  
+  - Start the response directly with "Question:"—do NOT include any introductory text.  
+  - **Special Note for Single Correct Answer Structure**: Include the statements (A-D) directly under the Question text, each statement on a new line, but ONLY if part of the question (e.g., for matching pairs). Options must still be listed under "Options:".  
+  - **Special Note for Multiple Statements Structures**: List the statements under the Question text using decimal numbers (e.g., "1.", "2.", "3.", "4."), each statement on a new line. Options must be listed under "Options:" as specified. For three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three."  
 
-        **Now, generate ${count} MCQ${count > 1 ? 's' : ''} for "${selectedChapter || 'entire book'}" using the "${selectedStructure.name}" structure, focusing on "${selectedTheme}":**
-      `;
+  **Special Instructions for Specific Categories:**  
+  - For "Polity": Use the Laxmikanth's Indian Polity book (File ID: ${fileIds.Polity}), ensuring questions cover constitutional framework, governance, and political dynamics comprehensively.  
+  - For "Science": Focus on the Science section of the Disha IAS Previous Year Papers (File ID: ${fileIds.Science}), covering Physics, Chemistry, Biology, and Science & Technology, extrapolating to cutting-edge historical contexts.  
+  - For "CSAT": Use the CSAT section (File ID: ${fileIds.CSAT}), integrating complex logical extensions.  
+  - For "PreviousYearPapers": Base on the entire Disha IAS book (File ID: ${fileIds.PreviousYearPapers}), weaving in advanced interpretations.  
+
+  **Now, generate ${count} MCQ${count > 1 ? 's' : ''} based on the book: "${bookInfo.bookName}" (File ID: ${fileId}) using the "${selectedStructure.name}" structure, focusing on "${selectedTheme}" within "${selectedChapter || 'entire book'}":**
+`;
     } else {
       if (!fileId || fileId === "pending" || fileId.startsWith("[TBD")) {
         throw new Error(`File for category ${category} is not available (File ID: ${fileId}). MCQs cannot be generated.`);
@@ -1090,7 +1101,39 @@ async function generateMCQs(query, category, userId, count, chapter, retryCount 
     }
 
     if (mongoConnected) {
-      for (const mcq of newMCQs) {
+      const validMCQs = newMCQs.filter(mcq => {
+        // Validate MCQ structure
+        const hasValidOptions = mcq.options && 
+          mcq.options.A && mcq.options.B && mcq.options.C && mcq.options.D &&
+          Object.keys(mcq.options).length === 4;
+        const hasValidQuestion = mcq.question && Array.isArray(mcq.question) && 
+          mcq.question.length > 0 && 
+          !mcq.question.some(line => line.match(/^\([a-d]\)/) || line.match(/^Options:/));
+        const hasValidAnswer = mcq.correctAnswer && ['A', 'B', 'C', 'D'].includes(mcq.correctAnswer);
+        const hasValidExplanation = mcq.explanation && typeof mcq.explanation === 'string' && mcq.explanation.length > 0;
+    
+        const isValid = hasValidOptions && hasValidQuestion && hasValidAnswer && hasValidExplanation;
+        if (!isValid) {
+          console.warn(`Discarding invalid MCQ:`, {
+            question: mcq.question,
+            options: mcq.options,
+            correctAnswer: mcq.correctAnswer,
+            explanation: mcq.explanation
+          });
+        }
+        return isValid;
+      });
+    
+      if (validMCQs.length < newMCQs.length) {
+        console.warn(`Discarded ${newMCQs.length - validMCQs.length} invalid MCQ(s). Retrying generation...`);
+        const remainingCount = newMCQs.length - validMCQs.length;
+        if (remainingCount > 0) {
+          const retryMCQs = await generateMCQs(query, category, userId, remainingCount, chapter, retryCount + 1);
+          return [...validMCQs, ...(retryMCQs.error ? [] : retryMCQs)];
+        }
+      }
+    
+      for (const mcq of validMCQs) {
         await db.collection("mcqs").insertOne({
           book: bookInfo.bookName,
           category,
@@ -1099,7 +1142,7 @@ async function generateMCQs(query, category, userId, count, chapter, retryCount 
           createdAt: new Date()
         });
       }
-      console.log(`Saved ${newMCQs.length} MCQ${newMCQs.length > 1 ? 's' : ''} to MongoDB for category=${category}, chapter=${selectedChapter || 'entire-book'}`);
+      console.log(`Saved ${validMCQs.length} MCQ${validMCQs.length > 1 ? 's' : ''} to MongoDB for category=${category}, chapter=${selectedChapter || 'entire-book'}`);
     }
 
     return newMCQs;
@@ -1427,8 +1470,24 @@ function parseSingleMCQ(rawResponse) {
     }
   }
 
-  const question = questionLines.length > 0
-    ? questionLines.join("\n").replace("Question: ", "").split("\n").map(line => line.trim()).filter(line => line)
+  // Clean question lines and extract misplaced options
+  let cleanedQuestionLines = [];
+  const misplacedOptions = [];
+  let inOptionsSection = false;
+  for (const line of questionLines) {
+    if (line.match(/^Options:/)) {
+      inOptionsSection = true;
+      continue;
+    }
+    if (inOptionsSection && line.match(/^\([a-d]\)\s*.+$/i)) {
+      misplacedOptions.push(line);
+    } else {
+      cleanedQuestionLines.push(line);
+    }
+  }
+
+  const question = cleanedQuestionLines.length > 0
+    ? cleanedQuestionLines.join("\n").replace("Question: ", "").split("\n").map(line => line.trim()).filter(line => line)
     : [];
 
   let optionsSection = "";
@@ -1444,7 +1503,13 @@ function parseSingleMCQ(rawResponse) {
 
   const optionsLines = optionsSection.split("\n").map(line => line.trim()).filter(line => line && !line.startsWith("Options:"));
   const options = {};
+  // Add options from the Options: section
   optionsLines.forEach(line => {
+    const match = line.match(/^\((a|b|c|d)\)\s*(.+)$/i);
+    if (match) options[match[1].toUpperCase()] = match[2].trim();
+  });
+  // Add misplaced options from the question section
+  misplacedOptions.forEach(line => {
     const match = line.match(/^\((a|b|c|d)\)\s*(.+)$/i);
     if (match) options[match[1].toUpperCase()] = match[2].trim();
   });
