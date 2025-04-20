@@ -80,7 +80,6 @@ async function connectToMongoDB() {
     mongoConnected = true;
     await db.collection("mcqs").createIndex({ book: 1, category: 1, chapter: 1 });
     await db.collection("battleground_rankings").createIndex({ score: -1, date: 1 });
-    await db.collection("users").createIndex({ username: 1 }, { unique: true });
   } catch (error) {
     console.error("Failed to connect to MongoDB:", error.message);
     mongoConnected = false;
@@ -280,7 +279,6 @@ const extractThemes = async (threadId, chapter, fileId, category) => {
 };
 
 // New endpoint to fetch chapters with themes
-// New endpoint to fetch chapters with themes
 app.post("/available-chapters", async (req, res) => {
   try {
     const { category } = req.body;
@@ -293,60 +291,6 @@ app.post("/available-chapters", async (req, res) => {
   } catch (error) {
     console.error(`Error in /available-chapters for category=${req.body.category || 'unknown'}:`, error.message);
     res.status(500).json({ error: "Failed to fetch available chapters", details: error.message });
-  }
-});
-
-// Add endpoint to fetch username
-app.post("/user/username", async (req, res) => {
-  try {
-    const { uid } = req.body;
-    if (!uid) {
-      return res.status(400).json({ error: "Missing user ID" });
-    }
-
-    if (!mongoConnected) {
-      return res.status(500).json({ error: "MongoDB not connected" });
-    }
-
-    const userDoc = await db.collection("users").findOne({ googleId: uid });
-    if (userDoc && userDoc.username) {
-      return res.json({ username: userDoc.username });
-    }
-
-    return res.json({ username: null });
-  } catch (error) {
-    console.error("Error in /user/username:", error.message);
-    res.status(500).json({ error: "Failed to fetch username", details: error.message });
-  }
-});
-
-// Add endpoint to set username
-app.post("/user/set-username", async (req, res) => {
-  try {
-    const { uid, username } = req.body;
-    if (!uid || !username) {
-      return res.status(400).json({ error: "Missing user ID or username" });
-    }
-
-    if (!mongoConnected) {
-      return res.status(500).json({ error: "MongoDB not connected" });
-    }
-
-    const existingUser = await db.collection("users").findOne({ username });
-    if (existingUser) {
-      return res.status(400).json({ error: "Username already taken. Please choose a different one." });
-    }
-
-    await db.collection("users").updateOne(
-      { googleId: uid },
-      { $set: { username, googleId: uid } },
-      { upsert: true }
-    );
-
-    res.json({ message: "Username set successfully" });
-  } catch (error) {
-    console.error("Error in /user/set-username:", error.message);
-    res.status(500).json({ error: "Failed to set username", details: error.message });
   }
 });
 
@@ -951,9 +895,31 @@ const getFullChapterName = (chapterKey, category) => {
   return chapterKey;
 };
 
-// Generate MCQs with retry logic
+// Fetch cached MCQs from MongoDB
+async function fetchCachedMCQs(category, chapter, count) {
+  if (!mongoConnected) {
+    console.warn(`MongoDB not connected, cannot fetch cached MCQs for category=${category}, chapter=${chapter}`);
+    return [];
+  }
+  try {
+    let matchQuery = { category };
+    if (chapter && chapter !== "entire-book") {
+      matchQuery.chapter = chapter;
+    }
+    const cachedMCQs = await db.collection("mcqs").aggregate([
+      { $match: matchQuery },
+      { $sample: { size: count } }
+    ]).toArray();
+    console.log(`Fetched ${cachedMCQs.length} cached MCQ(s) for category=${category}, chapter=${chapter || 'any'}`);
+    return cachedMCQs.map(m => m.mcq);
+  } catch (error) {
+    console.error(`Error fetching cached MCQs for category=${category}, chapter=${chapter}:`, error.message);
+    return [];
+  }
+}
+
+// Generate MCQs with cached fallback
 async function generateMCQs(query, category, userId, count, chapter, retryCount = 0) {
-  const maxRetries = 2;
   let threadId = userThreads.get(userId);
   if (!threadId) {
     const thread = await openai.beta.threads.create();
@@ -1067,8 +1033,8 @@ async function generateMCQs(query, category, userId, count, chapter, retryCount 
     (b) [Option B]  
     (c) [Option C]  
     (d) [Option D]  
-    Correct Answer: [Correct option letter, e.g., (a)]  
-    Explanation: [Detailed explanation, 3-5 sentences, weaving chapter content with broader knowledge, justifying the answer with precision and insight. Conclude with: "Thus, the correct answer is [option] because [reason]."]  
+    Correct Answer: [Single lowercase letter: a, b, c, or d, corresponding to the correct option. Do NOT include parentheses, phrases like "Only two," or any text beyond the single letter. For "Multiple Statements - How Many Correct," the Correct Answer must be the letter matching the correct option (e.g., 'c' for '(c) Only two').]  
+    Explanation: [Detailed explanation, 3-5 sentences, weaving chapter content with broader knowledge, justifying why the selected option is correct and others are incorrect. Conclude with: "Thus, the correct answer is (option letter) because [reason]."]  
   - **Strict Formatting Rules**:
     - The "Question:" section MUST contain ONLY the question text and any numbered statements (e.g., "1.", "2.", "3.") if applicable. Do NOT include options, "Options:", or any option-related text here.
     - The "Options:" section MUST list exactly four options labeled (a), (b), (c), (d), each on a new line, with no additional text or labels like "Options:" within the question text.
@@ -1077,7 +1043,7 @@ async function generateMCQs(query, category, userId, count, chapter, retryCount 
   - For multiple MCQs, separate each MCQ with "----" on a new line.  
   - Start the response directly with "Question:"—do NOT include any introductory text.  
   - **Special Note for Single Correct Answer Structure**: Include the statements (A-D) directly under the Question text, each statement on a new line, but ONLY if part of the question (e.g., for matching pairs). Options must still be listed under "Options:".  
-  - **Special Note for Multiple Statements Structures**: List the statements under the Question text using decimal numbers (e.g., "1.", "2.", "3.", "4."), each statement on a new line. Options must be listed under "Options:" as specified. For three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three."  
+  - **Special Note for Multiple Statements Structures**: List the statements under the Question text using decimal numbers (e.g., "1.", "2.", "3.", "4."), each statement on a new line. For three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three."  
 
   **Special Instructions for Specific Categories:**  
   - For "Polity": Use the Laxmikanth's Indian Polity book (File ID: ${fileIds.Polity}), ensuring questions cover constitutional framework, governance, and political dynamics comprehensively.  
@@ -1093,56 +1059,56 @@ async function generateMCQs(query, category, userId, count, chapter, retryCount 
       }
 
       generalInstruction = `
-        You are an AI designed to create an elite UPSC training camp for the TrainWithMe platform, delivering diverse, deeply researched, and accurate MCQs that captivate and challenge users. You have access to the uploaded book content (File ID: ${fileId}) and your extensive training data encompassing vast historical, philosophical, cultural, geographical, and scientific knowledge.
+  You are an AI designed to create an elite UPSC training camp for the TrainWithMe platform, delivering diverse, deeply researched, and accurate MCQs that captivate and challenge users. You have access to the uploaded book content (File ID: ${fileId}) and your extensive training data encompassing vast historical, philosophical, cultural, geographical, and scientific knowledge.
 
-        📚 Reference Book for This Query:  
-        - Category: ${category}  
-        - Book: ${bookInfo.bookName}  
-        - File ID: ${fileId}  
-        - Description: ${bookInfo.description}  
+  📚 Reference Book for This Query:  
+  - Category: ${category}  
+  - Book: ${bookInfo.bookName}  
+  - File ID: ${fileId}  
+  - Description: ${bookInfo.description}  
 
-        **Instructions for MCQ Generation:**  
-        - Generate ${count} MCQ${count > 1 ? 's' : ''} inspired by the specified chapter ("${selectedChapter || 'entire book'}") of the book (${bookInfo.bookName}).  
-        - **Theme-Based Focus**: Base this MCQ (question ${questionCount}) on the theme: "${selectedTheme}". Use the chapter content (File ID: ${fileId}) as the primary source, but interpret the theme broadly to include related subthemes or sub-subthemes.  
-        - **Even Distribution**: Avoid fixating on overused figures or events unless tied to "${selectedTheme}" in a fresh way. For science, avoid overused topics like Newton's laws unless uniquely relevant to "${selectedTheme}".  
-        - **Balance Thematic and Fact-Based Questions**: Ensure a 50/50 mix of thematic questions (testing conceptual understanding, e.g., thermodynamics principles) and fact-based questions (testing specific details, e.g., "The atomic number of Carbon is..."). Include precise data like scientific constants, formulas, or discoveries from the chapter where applicable.  
-        - **Maximum Complexity and Unpredictability**: Craft challenging, unique MCQs that test deep understanding, critical thinking, and analytical skills at an elite UPSC level. Avoid predictable patterns:
-          - For "Multiple Statements - How Many Correct," ensure correct answers are evenly distributed (e.g., "only one" as likely as "only two" or "only three"). Include subtle distractors and false statements to make "only one" or "none" viable.
-          - For "Assertion and Reason," create nuanced assertions and reasons with complex relationships (e.g., partial truths, misleading reasons) to avoid obvious answers like option A. Vary correct options (a, b, c, d) evenly.
-        - **Accuracy Assurance**: Verify the factual correctness of each question, options, and answer. Cross-check scientific details and ensure the correct option aligns perfectly with the explanation. The explanation must justify why the correct option is true and others are false.  
-        - **Three-Statement Handling**: For "Multiple Statements - How Many Correct" with three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three." Generate questions where "None" can be correct by including deliberately false statements.  
+  **Instructions for MCQ Generation:**  
+  - Generate ${count} MCQ${count > 1 ? 's' : ''} inspired by the specified chapter ("${selectedChapter || 'entire book'}") of the book (${bookInfo.bookName}).  
+  - **Theme-Based Focus**: Base this MCQ (question ${questionCount}) on the theme: "${selectedTheme}". Use the chapter content (File ID: ${fileId}) as the primary source, but interpret the theme broadly to include related subthemes or sub-subthemes.  
+  - **Even Distribution**: Avoid fixating on overused figures or events unless tied to "${selectedTheme}" in a fresh way. For science, avoid overused topics like Newton's laws unless uniquely relevant to "${selectedTheme}".  
+  - **Balance Thematic and Fact-Based Questions**: Ensure a 50/50 mix of thematic questions (testing conceptual understanding, e.g., thermodynamics principles) and fact-based questions (testing specific details, e.g., "The atomic number of Carbon is..."). Include precise data like scientific constants, formulas, or discoveries from the chapter where applicable.  
+  - **Maximum Complexity and Unpredictability**: Craft challenging, unique MCQs that test deep understanding, critical thinking, and analytical skills at an elite UPSC level. Avoid predictable patterns:
+    - For "Multiple Statements - How Many Correct," ensure correct answers are evenly distributed (e.g., "only one" as likely as "only two" or "only three"). Include subtle distractors and false statements to make "only one" or "none" viable.
+    - For "Assertion and Reason," create nuanced assertions and reasons with complex relationships (e.g., partial truths, misleading reasons) to avoid obvious answers like option A. Vary correct options (a, b, c, d) evenly.
+  - **Accuracy Assurance**: Verify the factual correctness of each question, options, and answer. Cross-check scientific details and ensure the correct option aligns perfectly with the explanation. The explanation must justify why the correct option is true and others are false.  
+  - **Three-Statement Handling**: For "Multiple Statements - How Many Correct" with three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three." Generate questions where "None" can be correct by including deliberately false statements.  
 
-        **UPSC Structure to Use:**  
-        - Use the following UPSC structure for each MCQ:  
-          - **Structure Name**: ${selectedStructure.name}  
-          - **Example**: ${selectedStructure.example}  
-          - **Options**: ${options.join(", ")} (For "Multiple Statements - How Many Correct," adjust to three-statement options if applicable)  
-        - Adapt the deeply researched content to fit this structure creatively and precisely.  
+  **UPSC Structure to Use:**  
+  - Use the following UPSC structure for each MCQ:  
+    - **Structure Name**: ${selectedStructure.name}  
+    - **Example**: ${selectedStructure.example}  
+    - **Options**: ${options.join(", ")} (For "Multiple Statements - How Many Correct," adjust to three-statement options if applicable)  
+  - Adapt the deeply researched content to fit this structure creatively and precisely.  
 
-        **Response Structure:**  
-        - For each MCQ, use this EXACT structure with PLAIN TEXT headers:  
-          Question: [Full question text, following the selected UPSC structure, rich with depth and complexity. Do NOT include options or "Options:" in the question text.]  
-          Options:  
-          (a) [Option A]  
-          (b) [Option B]  
-          (c) [Option C]  
-          (d) [Option D]  
-          Correct Answer: [Correct option letter, e.g., (a)]  
-          Explanation: [Detailed explanation, 3-5 sentences, weaving chapter content with broader knowledge, justifying the answer with precision and insight. Conclude with: "Thus, the correct answer is [option] because [reason]."]  
-        - Separate each section with EXACTLY TWO newlines (\n\n).  
-        - For multiple MCQs, separate each MCQ with "----" on a new line.  
-        - Start the response directly with "Question:"—do NOT include any introductory text.  
-        - **Special Note for Single Correct Answer Structure**: Include the statements (A-D) directly under the Question text, each statement on a new line, but ONLY if part of the question (e.g., for matching pairs). Options must still be listed under "Options:".  
-        - **Special Note for Multiple Statements Structures**: List the statements under the Question text using decimal numbers (e.g., "1.", "2.", "3.", "4."), each statement on a new line. Options must be listed under "Options:" as specified. For three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three."  
+  **Response Structure:**  
+  - For each MCQ, use this EXACT structure with PLAIN TEXT headers:  
+    Question: [Full question text, following the selected UPSC structure, rich with depth and complexity]  
+    Options:  
+    (a) [Option A]  
+    (b) [Option B]  
+    (c) [Option C]  
+    (d) [Option D]  
+    Correct Answer: [Single lowercase letter: a, b, c, or d, corresponding to the correct option. Do NOT include parentheses, phrases like "Only two," or any text beyond the single letter. For "Multiple Statements - How Many Correct," the Correct Answer must be the letter matching the correct option (e.g., 'c' for '(c) Only two').]  
+    Explanation: [Detailed explanation, 3-5 sentences, weaving chapter content with broader knowledge, justifying why the selected option is correct and others are incorrect. Conclude with: "Thus, the correct answer is (option letter) because [reason]."]  
+  - Separate each section with EXACTLY TWO newlines (\n\n).  
+  - For multiple MCQs, separate each MCQ with "----" on a new line.  
+  - Start the response directly with "Question:"—do NOT include any introductory text.  
+  - **Special Note for Single Correct Answer Structure**: Include the statements (A-D) directly under the Question text, each statement on a new line.  
+  - **Special Note for Multiple Statements Structures**: List the statements under the Question text using decimal numbers (e.g., "1.", "2.", "3.", "4."), each statement on a new line. For three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three."  
 
-        **Special Instructions for Specific Categories:**  
-        - For "Polity": Use the Laxmikanth's Indian Polity book (File ID: ${fileIds.Polity}), ensuring questions cover constitutional framework, governance, and political dynamics comprehensively.  
-        - For "Science": Focus on the Science section of the Disha IAS Previous Year Papers (File ID: ${fileIds.Science}), covering Physics, Chemistry, Biology, and Science & Technology, extrapolating to cutting-edge historical contexts.  
-        - For "CSAT": Use the CSAT section (File ID: ${fileIds.CSAT}), integrating complex logical extensions.  
-        - For "PreviousYearPapers": Base on the entire Disha IAS book (File ID: ${fileIds.PreviousYearPapers}), weaving in advanced interpretations.  
+  **Special Instructions for Specific Categories:**  
+  - For "Polity": Use the Laxmikanth's Indian Polity book (File ID: ${fileIds.Polity}), ensuring questions cover constitutional framework, governance, and political dynamics comprehensively.  
+  - For "Science": Focus on the Science section of the Disha IAS Previous Year Papers (File ID: ${fileIds.Science}), covering Physics, Chemistry, Biology, and Science & Technology, extrapolating to cutting-edge historical contexts.  
+  - For "CSAT": Use the CSAT section (File ID: ${fileIds.CSAT}), integrating complex logical extensions.  
+  - For "PreviousYearPapers": Base on the entire Disha IAS book (File ID: ${fileIds.PreviousYearPapers}), weaving in advanced interpretations.  
 
-        **Now, generate ${count} MCQ${count > 1 ? 's' : ''} based on the book: "${bookInfo.bookName}" (File ID: ${fileId}) using the "${selectedStructure.name}" structure, focusing on "${selectedTheme}" within "${selectedChapter || 'entire book'}":**
-      `;
+  **Now, generate ${count} MCQ${count > 1 ? 's' : ''} based on the book: "${bookInfo.bookName}" (File ID: ${fileId}) using the "${selectedStructure.name}" structure, focusing on "${selectedTheme}" within "${selectedChapter || 'entire book'}":**
+`;
     }
 
     await openai.beta.threads.messages.create(threadId, {
@@ -1203,27 +1169,25 @@ async function generateMCQs(query, category, userId, count, chapter, retryCount 
       });
     
       if (validMCQs.length < newMCQs.length) {
-        console.warn(`Discarded ${newMCQs.length - validMCQs.length} invalid MCQ(s). Fetching cached MCQs as fallback...`);
+        console.warn(`Discarded ${newMCQs.length - validMCQs.length} invalid MCQ(s). Fetching cached MCQs...`);
         const remainingCount = newMCQs.length - validMCQs.length;
-        if (remainingCount > 0) {
-          // Fetch random cached MCQs as a fallback
-          const fallbackMCQs = await db.collection("mcqs").aggregate([
-            { $match: { category: { $in: Object.keys(categoryToBookMap) } } }, // Match any valid category
-            { $sample: { size: remainingCount } }
-          ]).toArray();
-
-          if (fallbackMCQs.length >= remainingCount) {
-            console.log(`Fetched ${fallbackMCQs.length} cached MCQs as fallback for category: ${category}`);
-            return [...validMCQs, ...fallbackMCQs.map(m => m.mcq)];
+        if (remainingCount > 0 && mongoConnected) {
+          const cachedMCQs = await fetchCachedMCQs(category, selectedChapter, remainingCount);
+          if (cachedMCQs.length >= remainingCount) {
+            return [...validMCQs, ...cachedMCQs.slice(0, remainingCount)];
           } else {
-            console.warn(`Insufficient cached MCQs for fallback (${fallbackMCQs.length}/${remainingCount}). Generating new MCQs...`);
-            if (retryCount >= maxRetries) {
-              console.error(`Max retries (${maxRetries}) reached for MCQ generation`);
-              return { error: `Failed to generate valid MCQs after ${maxRetries} retries` };
+            console.warn(`Insufficient cached MCQs (${cachedMCQs.length}/${remainingCount}) for category=${category}, chapter=${selectedChapter || 'any'}. Falling back to broader cache.`);
+            const fallbackMCQs = await fetchCachedMCQs(category, null, remainingCount - cachedMCQs.length);
+            if (cachedMCQs.length + fallbackMCQs.length >= remainingCount) {
+              return [...validMCQs, ...cachedMCQs, ...fallbackMCQs.slice(0, remainingCount - cachedMCQs.length)];
+            } else {
+              console.warn(`Insufficient cached MCQs even after fallback. Returning available MCQs.`);
+              return [...validMCQs, ...cachedMCQs, ...fallbackMCQs];
             }
-            const retryMCQs = await generateMCQs(query, category, userId, remainingCount - fallbackMCQs.length, chapter, retryCount + 1);
-            return [...validMCQs, ...fallbackMCQs.map(m => m.mcq), ...(retryMCQs.error ? [] : retryMCQs)];
           }
+        } else {
+          console.warn(`No MongoDB connection or no MCQs to fetch. Returning valid MCQs only.`);
+          return validMCQs;
         }
       }
     
@@ -1242,16 +1206,11 @@ async function generateMCQs(query, category, userId, count, chapter, retryCount 
     return newMCQs;
   } catch (error) {
     console.error(`Error generating ${count} MCQs for category=${category}, userId=${userId}, retry=${retryCount}:`, error.message);
-    if (retryCount < maxRetries) {
-      console.log(`Retrying MCQ generation, attempt ${retryCount + 2}/${maxRetries + 1}`);
-      return await generateMCQs(query, category, userId, count, chapter, retryCount + 1);
-    }
     throw error;
   } finally {
     releaseLock(threadId);
   }
 }
-
 app.post("/ask", async (req, res) => {
   try {
     if (!req.body) {
@@ -1277,7 +1236,7 @@ app.post("/ask", async (req, res) => {
       ];
       const randomSubject = category || subjects[Math.floor(Math.random() * subjects.length)];
       console.log(`Battleground mode: Fetching ${count} MCQ(s) for subject: ${randomSubject}`);
-
+    
       // Map battleground subjects to possible categoryToBookMap keys (multiple books for History and Geography)
       const subjectMapping = {
         Polity: ["Polity"],
@@ -1289,23 +1248,21 @@ app.post("/ask", async (req, res) => {
         CurrentAffairs: ["CurrentAffairs"],
         PreviousYearPapers: ["PreviousYearPapers"]
       };
-
+    
       const possibleSubjects = subjectMapping[randomSubject];
       if (!possibleSubjects || possibleSubjects.length === 0) {
         console.error(`Invalid subject mapping for ${randomSubject}`);
         res.status(400).json({ error: "Invalid subject", details: `Subject ${randomSubject} not supported` });
         return;
       }
-
-      // Randomly select one book/category for History or Geography
+    
       const mappedSubject = possibleSubjects[Math.floor(Math.random() * possibleSubjects.length)];
-      console.log(`Selected book category for ${randomSubject}: ${mappedSubject}`);
       if (!categoryToBookMap[mappedSubject]) {
         console.error(`Invalid mapped subject: ${mappedSubject}`);
         res.status(400).json({ error: "Invalid subject", details: `Mapped subject ${mappedSubject} not supported` });
         return;
       }
-
+    
       let mcqs = [];
       if (!forceGenerate && mongoConnected) {
         const matchQuery = { category: mappedSubject };
@@ -1318,7 +1275,7 @@ app.post("/ask", async (req, res) => {
         ]).toArray();
         console.log(`Found ${mcqs.length} cached MCQ(s) for subject: ${mappedSubject}, chapter: ${chapter || 'any'}`);
       }
-
+    
       if (mcqs.length < count) {
         console.log(`Insufficient cached MCQs (${mcqs.length}/${count}) for subject: ${mappedSubject}, generating ${count - mcqs.length} MCQs`);
         const neededCount = count - mcqs.length;
@@ -1326,7 +1283,7 @@ app.post("/ask", async (req, res) => {
           { $match: { category: mappedSubject } },
           { $sample: { size: 1 } }
         ]).toArray();
-
+    
         let selectedTheme, randomChapter;
         if (themes.length === 0) {
           console.warn(`No themes available for ${mappedSubject}, using default chapter`);
@@ -1336,42 +1293,30 @@ app.post("/ask", async (req, res) => {
           selectedTheme = themes[0].themes[Math.floor(Math.random() * themes[0].themes.length)];
           randomChapter = themes[0].chapter;
         }
-
+    
         const bookInfo = categoryToBookMap[mappedSubject];
         if (!bookInfo) {
           console.error(`No book info found for mapped subject: ${mappedSubject}`);
           res.status(500).json({ error: "Failed to generate MCQs", details: `No book info for ${mappedSubject}` });
           return;
         }
-
+    
         const query = `Generate ${neededCount} MCQ from ${randomChapter} of the ${bookInfo.bookName} based on theme: ${selectedTheme}. Use the chapter content as the primary source, supplemented by internet resources and general knowledge to ensure uniqueness and depth.`;
-
+    
         const newMCQs = await generateMCQs(query, mappedSubject, userId, neededCount, randomChapter);
-        if (newMCQs.error) {
-          console.error(`Failed to generate new MCQs: ${newMCQs.error}`);
-          // Fetch fallback MCQs if generation fails completely
-          const fallbackMCQs = await db.collection("mcqs").aggregate([
-            { $match: { category: { $in: Object.keys(categoryToBookMap) } } },
-            { $sample: { size: neededCount } }
-          ]).toArray();
-          if (fallbackMCQs.length >= neededCount) {
-            console.log(`Using ${fallbackMCQs.length} cached MCQs as fallback due to generation failure`);
-            mcqs = mcqs.concat(fallbackMCQs.map(m => m.mcq));
-          } else {
-            res.status(500).json({ error: "Failed to generate MCQs", details: newMCQs.error });
-            return;
-          }
-        } else {
-          mcqs = mcqs.concat(newMCQs);
-        }
+        mcqs = mcqs.concat(await db.collection("mcqs").find({
+          book: bookInfo.bookName,
+          category: mappedSubject,
+          chapter: randomChapter
+        }).sort({ createdAt: -1 }).limit(neededCount).toArray());
       }
-
+    
       if (mcqs.length >= count) {
         console.log(`Returning ${mcqs.length} MCQ(s) for Battleground, subject: ${mappedSubject}`);
         res.json({ answers: count === 1 ? mcqs[0].mcq : mcqs.map(m => m.mcq) });
         return;
       }
-
+    
       console.error(`Failed to retrieve or generate ${count} MCQs for subject: ${mappedSubject}`);
       res.status(500).json({ error: "Failed to retrieve or generate MCQs", details: `Insufficient MCQs available for ${mappedSubject}` });
       return;
@@ -1550,7 +1495,6 @@ app.post("/ask", async (req, res) => {
     res.status(500).json({ error: "AI service error", details: error.message });
   }
 });
-
 // New leaderboard endpoints
 app.post("/battleground/submit", async (req, res) => {
   try {
@@ -1672,7 +1616,7 @@ function parseSingleMCQ(rawResponse) {
   };
 }
 
-// Start the server for me
+// Start the server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
