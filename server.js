@@ -15,13 +15,12 @@ app.use((req, res, next) => {
   if (allowedOrigins.includes(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
   } else {
-    res.setHeader("Access-Control-Allow-Origin", "*"); // Fallback for safety
+    res.setHeader("Access-Control-Allow-Origin", "*");
   }
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.setHeader("Access-Control-Allow-Credentials", "true");
 
-  // Handle preflight OPTIONS requests
   if (req.method === "OPTIONS") {
     return res.status(204).end();
   }
@@ -29,7 +28,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// Ensure CORS headers are added even for error responses
 app.use((err, req, res, next) => {
   const origin = req.headers.origin;
   if (allowedOrigins.includes(origin)) {
@@ -45,7 +43,6 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: "Internal Server Error", details: err.message });
 });
 
-// Log all requests for debugging
 app.use((req, res, next) => {
   console.log(`Request: ${req.method} ${req.path}, Origin: ${req.headers.origin}`);
   next();
@@ -95,7 +92,6 @@ const fileIds = {
   ArtAndCulture: "file-Gn3dsACNC2MP2xS9QeN3Je",
   FundamentalGeography: "file-CMWSg6udmgtVZpNS3tDGHW",
   IndianGeography: "file-YaaLnGG93PF9DgMsEGcrEN",
-  Atlas: "pending",
   Science: "file-TGgc65bHqVMxpmj5ULyR6K",
   Environment: "file-Yb1cfrHMATDNQgyUa6jDqw",
   Economy: "file-TJ5Djap1uv4fZeyM5c6sKU",
@@ -132,11 +128,6 @@ const categoryToBookMap = {
     bookName: "NCERT Class 11th Indian Geography",
     fileId: fileIds.IndianGeography,
     description: "NCERT Class 11th book on Indian Geography"
-  },
-  Atlas: {
-    bookName: "Atlas",
-    fileId: fileIds.Atlas,
-    description: "General knowledge or internet-based (file pending)"
   },
   Science: {
     bookName: "Disha IAS Previous Year Papers (Science Section)",
@@ -232,11 +223,6 @@ async function saveThemes(category, themes) {
 
 // Extract themes from the chapter and save to MongoDB
 const extractThemes = async (threadId, chapter, fileId, category) => {
-  if (category === "Atlas") {
-    console.log(`Atlas file pending, using fallback theme for chapter: ${chapter}`);
-    return [`Theme: General Geography - Subtheme: ${chapter || 'Atlas Content'} - Sub-subtheme: Concepts`];
-  }
-
   let themeInstruction;
   if (category === "Polity") {
     themeInstruction = `
@@ -300,7 +286,7 @@ async function migrateThemesToMongoDB() {
     console.warn("MongoDB not connected, skipping theme migration");
     return;
   }
-  const categories = Object.keys(categoryToBookMap).filter(cat => cat !== "Atlas");
+  const categories = Object.keys(categoryToBookMap);
   console.log(`Categories to migrate themes: ${categories.join(", ")}`);
   for (const category of categories) {
     try {
@@ -610,114 +596,6 @@ const chapterToUnitMap = {
   "Important River Basins": "Appendix III",
   "State/Union Territory Wise Forest Cover": "Appendix IV",
   "National Parks of India": "Appendix V",
-  // Atlas
-  "Maps and Map Making": "Chapter 1",
-  "The Universe": "Chapter 2",
-  "The Earth": "Chapter 3",
-  "Realms of the Earth": "Chapter 4",
-  "Contours and Landforms": "Chapter 5",
-  "The Indian Subcontinent – Physical": "Chapter 6",
-  "The Indian Subcontinent – Political": "Chapter 7",
-  "Northern India and Nepal": "Chapter 8",
-  "North-Central and Eastern India": "Chapter 9",
-  "North-Eastern India, Bhutan and Bangladesh": "Chapter 10",
-  "Western India and Pakistan": "Chapter 11",
-  "Southern India and Sri Lanka": "Chapter 12",
-  "Jammu and Kashmir, Himachal Pradesh, Punjab, Haryana, Delhi and Chandigarh": "Chapter 13",
-  "Rajasthan, Gujarat, Daman & Diu and Dadra & Nagar Haveli": "Chapter 14",
-  "Uttar Pradesh, Uttarakhand, Bihar and Jharkhand": "Chapter 15",
-  "Sikkim, West Bengal and the North-Eastern States": "Chapter 16",
-  "Madhya Pradesh, Chhattisgarh and Odisha": "Chapter 17",
-  "Maharashtra, Telangana, Andhra Pradesh and Goa": "Chapter 18",
-  "Karnataka, Tamil Nadu, Kerala and Puducherry": "Chapter 19",
-  "The Islands": "Chapter 20",
-  "India – Geology, Geological Formations, Structure and Major Faults and Thrusts": "Chapter 21",
-  "India – Physiography": "Chapter 22",
-  "India – Temperature and Pressure": "Chapter 23",
-  "India – Rainfall and Winds": "Chapter 24",
-  "India – Relative Humidity, Annual Temperature and Annual Rainfall": "Chapter 25",
-  "India – Monsoon, Rainfall Trends and Climatic Regions": "Chapter 26",
-  "India – Natural Vegetation and Forest Cover": "Chapter 27",
-  "India – Bio-geographic Zones, Wildlife and Wetlands": "Chapter 28",
-  "India – Drainage Basins and East & West Flowing Rivers": "Chapter 29",
-  "India – Soil and Land Use": "Chapter 30",
-  "India – Irrigation and Net Irrigated Area": "Chapter 31",
-  "India – Food grain Production, Livestock Population, Milk Production and Fisheries": "Chapter 32",
-  "India – Food Crops": "Chapter 33",
-  "India – Cash Crops": "Chapter 34",
-  "India – Important Mineral Belts and Number of Reported Mines": "Chapter 35",
-  "India – Production of Metallic and Non-Metallic Minerals": "Chapter 36",
-  "India – Metallic Minerals": "Chapter 37",
-  "India – Non-Metallic Minerals and Mineral Fuels": "Chapter 38",
-  "India – Mineral Deposits": "Chapter 39",
-  "India – Industrial Regions and Levels of Industrial Development": "Chapter 40",
-  "India – Industries": "Chapter 41",
-  "India – Power Projects and Power Consumption": "Chapter 42",
-  "India – Roads and Inland Waterways": "Chapter 43",
-  "India – Railways": "Chapter 44",
-  "India – Air and Sea Routes": "Chapter 45",
-  "India – Population": "Chapter 46",
-  "India – Human Development": "Chapter 47",
-  "India – Religions and Languages": "Chapter 48",
-  "India – Tourism": "Chapter 49",
-  "India – World Heritage Sites": "Chapter 50",
-  "India – Cultural Heritage": "Chapter 51",
-  "India – Environmental Concerns": "Chapter 52",
-  "India – Natural Hazards": "Chapter 53",
-  "Asia – Physical": "Chapter 54",
-  "Asia – Political": "Chapter 55",
-  "Asia – Climate, Natural Vegetation, Population and Economy": "Chapter 56",
-  "SAARC Countries": "Chapter 57",
-  "China, Mongolia and Taiwan": "Chapter 58",
-  "Japan, North Korea and South Korea": "Chapter 59",
-  "South-Eastern Asia": "Chapter 60",
-  "Myanmar, Thailand, Laos, Cambodia and Vietnam": "Chapter 61",
-  "West Asia": "Chapter 62",
-  "Afghanistan and Pakistan": "Chapter 63",
-  "Europe – Physical": "Chapter 64",
-  "Europe – Political": "Chapter 65",
-  "Europe – Climate, Natural Vegetation, Population and Economy": "Chapter 66",
-  "British Isles": "Chapter 67",
-  "France and Central Europe": "Chapter 68",
-  "Eurasia": "Chapter 69",
-  "Africa – Physical": "Chapter 70",
-  "Africa – Political": "Chapter 71",
-  "Africa – Climate, Natural Vegetation, Population and Economy": "Chapter 72",
-  "Southern Africa and Madagascar": "Chapter 73",
-  "North America": "Chapter 74",
-  "North America – Political": "Chapter 75",
-  "North America – Climate, Natural Vegetation, Population and Economy": "Chapter 76",
-  "United States of America and Alaska": "Chapter 77",
-  "South America – Physical": "Chapter 78",
-  "South America – Political": "Chapter 79",
-  "South America – Climate, Natural Vegetation, Population and Economy": "Chapter 80",
-  "Brazil": "Chapter 81",
-  "Oceania – Physical": "Chapter 82",
-  "Oceania – Political": "Chapter 83",
-  "Oceania – Climate, Natural Vegetation, Population and Economy": "Chapter 84",
-  "Pacific Ocean and Central Pacific Islands": "Chapter 85",
-  "Indian Ocean and Atlantic Ocean": "Chapter 86",
-  "The Arctic Ocean and Antarctica": "Chapter 87",
-  "World – Physical": "Chapter 88",
-  "World – Political": "Chapter 89",
-  "World – Climate": "Chapter 90",
-  "World – Annual Rainfall and Major Ocean Currents": "Chapter 91",
-  "World – Climatic Regions and Water Resources": "Chapter 92",
-  "World – Major Landforms and Forest Cover": "Chapter 93",
-  "World – Soil and Natural Vegetation": "Chapter 94",
-  "World – Agriculture and Industrial Regions": "Chapter 95",
-  "World – Minerals, Mineral Fuels, Trade and Economic Development": "Chapter 96",
-  "World – Population Density, Urbanization, Religions and Languages": "Chapter 97",
-  "World – Human Development": "Chapter 98",
-  "World – Environmental Concerns": "Chapter 99",
-  "World – Biomes at Risk": "Chapter 100",
-  "World – Plate Tectonics and Natural Hazards": "Chapter 101",
-  "World – Air Routes and Sea Routes": "Chapter 102",
-  "World – Facts and Figures – Flag, Area, Population, Countries, Language, Monetary Unit and GDP": "Chapter 103",
-  "World Statistics – Human Development and Economy": "Chapter 104",
-  "World – Geographic Comparisons": "Chapter 105",
-  "World – Time Zones": "Chapter 106",
-  "Index": "Chapter 107",
   // Science
   "Physics": "Chapter 1",
   "Chemistry": "Chapter 2",
@@ -878,7 +756,6 @@ const getFullChapterName = (chapterKey, category) => {
                     bookName.includes("Art and Culture") || 
                     bookName.includes("FundamentalGeography") || 
                     bookName.includes("IndianGeography") || 
-                    bookName.includes("Atlas") ||
                     bookName.includes("Science") ||
                     bookName.includes("Environment") ||
                     bookName.includes("Economy") ||
@@ -960,19 +837,14 @@ async function generateMCQs(query, category, userId, count, chapter, retryCount 
     questionCount++;
     questionCounts.set(questionCountKey, questionCount);
 
-    let themes;
-    if (category === "Atlas") {
-      themes = [`Theme: General Geography - Subtheme: ${selectedChapter || 'Atlas Content'} - Sub-subtheme: Concepts`];
-    } else {
-      const allThemes = await loadThemes(category);
-      themes = allThemes[selectedChapter]?.themes;
-      if (!themes) {
-        console.log(`No themes found for ${selectedChapter} in ${category}. Extracting...`);
-        themes = await extractThemes(threadId, selectedChapter, fileIds[category], category);
-      }
-      if (!themes || themes.length === 0) {
-        throw new Error(`No themes available for ${selectedChapter || 'entire-book'} in ${category}`);
-      }
+    const allThemes = await loadThemes(category);
+    let themes = allThemes[selectedChapter]?.themes;
+    if (!themes) {
+      console.log(`No themes found for ${selectedChapter} in ${category}. Extracting...`);
+      themes = await extractThemes(threadId, selectedChapter, fileIds[category], category);
+    }
+    if (!themes || themes.length === 0) {
+      throw new Error(`No themes available for ${selectedChapter || 'entire-book'} in ${category}`);
     }
 
     let used = usedThemes.get(questionCountKey) || [];
@@ -996,120 +868,61 @@ async function generateMCQs(query, category, userId, count, chapter, retryCount 
       options = selectedStructure.options.four;
     }
 
-    let generalInstruction;
-    if (category === "Atlas") {
-      generalInstruction = `
-  You are an AI designed to create an elite UPSC training camp for the TrainWithMe platform, delivering diverse, deeply researched, and accurate MCQs that captivate and challenge users. You have access to the uploaded book content (File ID: ${fileId}) and your extensive training data encompassing vast historical, philosophical, cultural, geographical, and scientific knowledge.
-
-  📚 Reference Book for This Query:  
-  - Category: ${category}  
-  - Book: ${bookInfo.bookName}  
-  - File ID: ${fileId}  
-  - Description: ${bookInfo.description}  
-
-  **Instructions for MCQ Generation:**  
-  - Generate ${count} MCQ${count > 1 ? 's' : ''} inspired by the specified chapter ("${selectedChapter || 'entire book'}") of the book (${bookInfo.bookName}).  
-  - **Theme-Based Focus**: Base this MCQ (question ${questionCount}) on the theme: "${selectedTheme}". Use the chapter content (File ID: ${fileId}) as the primary source, but interpret the theme broadly to include related subthemes or sub-subthemes.  
-  - **Even Distribution**: Avoid fixating on overused figures or events unless tied to "${selectedTheme}" in a fresh way. For science, avoid overused topics like Newton's laws unless uniquely relevant to "${selectedTheme}".  
-  - **Balance Thematic and Fact-Based Questions**: Ensure a 50/50 mix of thematic questions (testing conceptual understanding, e.g., thermodynamics principles) and fact-based questions (testing specific details, e.g., "The atomic number of Carbon is..."). Include precise data like scientific constants, formulas, or discoveries from the chapter where applicable.  
-  - **Maximum Complexity and Unpredictability**: Craft challenging, unique MCQs that test deep understanding, critical thinking, and analytical skills at an elite UPSC level. Avoid predictable patterns:
-    - For "Multiple Statements - How Many Correct," ensure correct answers are evenly distributed (e.g., "only one" as likely as "only two" or "only three"). Include subtle distractors and false statements to make "only one" or "none" viable.
-    - For "Assertion and Reason," create nuanced assertions and reasons with complex relationships (e.g., partial truths, misleading reasons) to avoid obvious answers like option A. Vary correct options (a, b, c, d) evenly.
-  - **Accuracy Assurance**: Verify the factual correctness of each question, options, and answer. Cross-check scientific details and ensure the correct option aligns perfectly with the explanation. The explanation must justify why the correct option is true and others are false.  
-  - **Three-Statement Handling**: For "Multiple Statements - How Many Correct" with three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three." Generate questions where "None" can be correct by including deliberately false statements.  
-
-  **UPSC Structure to Use:**  
-  - Use the following UPSC structure for each MCQ:  
-    - **Structure Name**: ${selectedStructure.name}  
-    - **Example**: ${selectedStructure.example}  
-    - **Options**: ${options.join(", ")} (For "Multiple Statements - How Many Correct," adjust to three-statement options if applicable)  
-  - Adapt the deeply researched content to fit this structure creatively and precisely.  
-
-  **Response Structure:**  
-  - For each MCQ, use this EXACT structure with PLAIN TEXT headers:  
-    Question: [Full question text, following the selected UPSC structure, rich with depth and complexity. Do NOT include options or "Options:" in the question text.]  
-    Options:  
-    (a) [Option A]  
-    (b) [Option B]  
-    (c) [Option C]  
-    (d) [Option D]  
-    Correct Answer: [Single lowercase letter: a, b, c, or d, corresponding to the correct option. Do NOT include parentheses, phrases like "Only two," or any text beyond the single letter. For "Multiple Statements - How Many Correct," the Correct Answer must be the letter matching the correct option (e.g., 'c' for '(c) Only two').]  
-    Explanation: [Detailed explanation, 3-5 sentences, weaving chapter content with broader knowledge, justifying why the selected option is correct and others are incorrect. Conclude with: "Thus, the correct answer is (option letter) because [reason]."]  
-  - **Strict Formatting Rules**:
-    - The "Question:" section MUST contain ONLY the question text and any numbered statements (e.g., "1.", "2.", "3.") if applicable. Do NOT include options, "Options:", or any option-related text here.
-    - The "Options:" section MUST list exactly four options labeled (a), (b), (c), (d), each on a new line, with no additional text or labels like "Options:" within the question text.
-    - Ensure all sections are present and correctly formatted, even if it requires rephrasing the question or options to fit the structure.
-  - Separate each section with EXACTLY TWO newlines (\n\n).  
-  - For multiple MCQs, separate each MCQ with "----" on a new line.  
-  - Start the response directly with "Question:"—do NOT include any introductory text.  
-  - **Special Note for Single Correct Answer Structure**: Include the statements (A-D) directly under the Question text, each statement on a new line, but ONLY if part of the question (e.g., for matching pairs). Options must still be listed under "Options:".  
-  - **Special Note for Multiple Statements Structures**: List the statements under the Question text using decimal numbers (e.g., "1.", "2.", "3.", "4."), each statement on a new line. For three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three."  
-
-  **Special Instructions for Specific Categories:**  
-  - For "Polity": Use the Laxmikanth's Indian Polity book (File ID: ${fileIds.Polity}), ensuring questions cover constitutional framework, governance, and political dynamics comprehensively.  
-  - For "Science": Focus on the Science section of the Disha IAS Previous Year Papers (File ID: ${fileIds.Science}), covering Physics, Chemistry, Biology, and Science & Technology, extrapolating to cutting-edge historical contexts.  
-  - For "CSAT": Use the CSAT section (File ID: ${fileIds.CSAT}), integrating complex logical extensions.  
-  - For "PreviousYearPapers": Base on the entire Disha IAS book (File ID: ${fileIds.PreviousYearPapers}), weaving in advanced interpretations.  
-
-  **Now, generate ${count} MCQ${count > 1 ? 's' : ''} based on the book: "${bookInfo.bookName}" (File ID: ${fileId}) using the "${selectedStructure.name}" structure, focusing on "${selectedTheme}" within "${selectedChapter || 'entire book'}":**
-`;
-    } else {
-      if (!fileId || fileId === "pending" || fileId.startsWith("[TBD")) {
-        throw new Error(`File for category ${category} is not available (File ID: ${fileId}). MCQs cannot be generated.`);
-      }
-
-      generalInstruction = `
-  You are an AI designed to create an elite UPSC training camp for the TrainWithMe platform, delivering diverse, deeply researched, and accurate MCQs that captivate and challenge users. You have access to the uploaded book content (File ID: ${fileId}) and your extensive training data encompassing vast historical, philosophical, cultural, geographical, and scientific knowledge.
-
-  📚 Reference Book for This Query:  
-  - Category: ${category}  
-  - Book: ${bookInfo.bookName}  
-  - File ID: ${fileId}  
-  - Description: ${bookInfo.description}  
-
-  **Instructions for MCQ Generation:**  
-  - Generate ${count} MCQ${count > 1 ? 's' : ''} inspired by the specified chapter ("${selectedChapter || 'entire book'}") of the book (${bookInfo.bookName}).  
-  - **Theme-Based Focus**: Base this MCQ (question ${questionCount}) on the theme: "${selectedTheme}". Use the chapter content (File ID: ${fileId}) as the primary source, but interpret the theme broadly to include related subthemes or sub-subthemes.  
-  - **Even Distribution**: Avoid fixating on overused figures or events unless tied to "${selectedTheme}" in a fresh way. For science, avoid overused topics like Newton's laws unless uniquely relevant to "${selectedTheme}".  
-  - **Balance Thematic and Fact-Based Questions**: Ensure a 50/50 mix of thematic questions (testing conceptual understanding, e.g., thermodynamics principles) and fact-based questions (testing specific details, e.g., "The atomic number of Carbon is..."). Include precise data like scientific constants, formulas, or discoveries from the chapter where applicable.  
-  - **Maximum Complexity and Unpredictability**: Craft challenging, unique MCQs that test deep understanding, critical thinking, and analytical skills at an elite UPSC level. Avoid predictable patterns:
-    - For "Multiple Statements - How Many Correct," ensure correct answers are evenly distributed (e.g., "only one" as likely as "only two" or "only three"). Include subtle distractors and false statements to make "only one" or "none" viable.
-    - For "Assertion and Reason," create nuanced assertions and reasons with complex relationships (e.g., partial truths, misleading reasons) to avoid obvious answers like option A. Vary correct options (a, b, c, d) evenly.
-  - **Accuracy Assurance**: Verify the factual correctness of each question, options, and answer. Cross-check scientific details and ensure the correct option aligns perfectly with the explanation. The explanation must justify why the correct option is true and others are false.  
-  - **Three-Statement Handling**: For "Multiple Statements - How Many Correct" with three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three." Generate questions where "None" can be correct by including deliberately false statements.  
-
-  **UPSC Structure to Use:**  
-  - Use the following UPSC structure for each MCQ:  
-    - **Structure Name**: ${selectedStructure.name}  
-    - **Example**: ${selectedStructure.example}  
-    - **Options**: ${options.join(", ")} (For "Multiple Statements - How Many Correct," adjust to three-statement options if applicable)  
-  - Adapt the deeply researched content to fit this structure creatively and precisely.  
-
-  **Response Structure:**  
-  - For each MCQ, use this EXACT structure with PLAIN TEXT headers:  
-    Question: [Full question text, following the selected UPSC structure, rich with depth and complexity]  
-    Options:  
-    (a) [Option A]  
-    (b) [Option B]  
-    (c) [Option C]  
-    (d) [Option D]  
-    Correct Answer: [Single lowercase letter: a, b, c, or d, corresponding to the correct option. Do NOT include parentheses, phrases like "Only two," or any text beyond the single letter. For "Multiple Statements - How Many Correct," the Correct Answer must be the letter matching the correct option (e.g., 'c' for '(c) Only two').]  
-    Explanation: [Detailed explanation, 3-5 sentences, weaving chapter content with broader knowledge, justifying why the selected option is correct and others are incorrect. Conclude with: "Thus, the correct answer is (option letter) because [reason]."]  
-  - Separate each section with EXACTLY TWO newlines (\n\n).  
-  - For multiple MCQs, separate each MCQ with "----" on a new line.  
-  - Start the response directly with "Question:"—do NOT include any introductory text.  
-  - **Special Note for Single Correct Answer Structure**: Include the statements (A-D) directly under the Question text, each statement on a new line.  
-  - **Special Note for Multiple Statements Structures**: List the statements under the Question text using decimal numbers (e.g., "1.", "2.", "3.", "4."), each statement on a new line. For three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three."  
-
-  **Special Instructions for Specific Categories:**  
-  - For "Polity": Use the Laxmikanth's Indian Polity book (File ID: ${fileIds.Polity}), ensuring questions cover constitutional framework, governance, and political dynamics comprehensively.  
-  - For "Science": Focus on the Science section of the Disha IAS Previous Year Papers (File ID: ${fileIds.Science}), covering Physics, Chemistry, Biology, and Science & Technology, extrapolating to cutting-edge historical contexts.  
-  - For "CSAT": Use the CSAT section (File ID: ${fileIds.CSAT}), integrating complex logical extensions.  
-  - For "PreviousYearPapers": Base on the entire Disha IAS book (File ID: ${fileIds.PreviousYearPapers}), weaving in advanced interpretations.  
-
-  **Now, generate ${count} MCQ${count > 1 ? 's' : ''} based on the book: "${bookInfo.bookName}" (File ID: ${fileId}) using the "${selectedStructure.name}" structure, focusing on "${selectedTheme}" within "${selectedChapter || 'entire book'}":**
-`;
+    if (!fileId || fileId === "pending" || fileId.startsWith("[TBD")) {
+      throw new Error(`File for category ${category} is not available (File ID: ${fileId}). MCQs cannot be generated.`);
     }
+
+    const generalInstruction = `
+You are an AI designed to create an elite UPSC training camp for the TrainWithMe platform, delivering diverse, deeply researched, and accurate MCQs that captivate and challenge users. You have access to the uploaded book content (File ID: ${fileId}) and your extensive training data encompassing vast historical, philosophical, cultural, geographical, and scientific knowledge.
+
+📚 Reference Book for This Query:  
+- Category: ${category}  
+- Book: ${bookInfo.bookName}  
+- File ID: ${fileId}  
+- Description: ${bookInfo.description}  
+
+**Instructions for MCQ Generation:**  
+- Generate ${count} MCQ${count > 1 ? 's' : ''} inspired by the specified chapter ("${selectedChapter || 'entire book'}") of the book (${bookInfo.bookName}).  
+- **Theme-Based Focus**: Base this MCQ (question ${questionCount}) on the theme: "${selectedTheme}". Use the chapter content (File ID: ${fileId}) as the primary source, but interpret the theme broadly to include related subthemes or sub-subthemes.  
+- **Even Distribution**: Avoid fixating on overused figures or events unless tied to "${selectedTheme}" in a fresh way. For science, avoid overused topics like Newton's laws unless uniquely relevant to "${selectedTheme}".  
+- **Balance Thematic and Fact-Based Questions**: Ensure a 50/50 mix of thematic questions (testing conceptual understanding, e.g., thermodynamics principles) and fact-based questions (testing specific details, e.g., "The atomic number of Carbon is..."). Include precise data like scientific constants, formulas, or discoveries from the chapter where applicable.  
+- **Maximum Complexity and Unpredictability**: Craft challenging, unique MCQs that test deep understanding, critical thinking, and analytical skills at an elite UPSC level. Avoid predictable patterns:
+  - For "Multiple Statements - How Many Correct," ensure correct answers are evenly distributed (e.g., "only one" as likely as "only two" or "only three"). Include subtle distractors and false statements to make "only one" or "none" viable.
+  - For "Assertion and Reason," create nuanced assertions and reasons with complex relationships (e.g., partial truths, misleading reasons) to avoid obvious answers like option A. Vary correct options (a, b, c, d) evenly.
+- **Accuracy Assurance**: Verify the factual correctness of each question, options, and answer. Cross-check scientific details and ensure the correct option aligns perfectly with the explanation. The explanation must justify why the selected option is true and others are false.  
+- **Three-Statement Handling**: For "Multiple Statements - How Many Correct" with three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three." Generate questions where "None" can be correct by including deliberately false statements.  
+
+**UPSC Structure to Use:**  
+- Use the following UPSC structure for each MCQ:  
+  - **Structure Name**: ${selectedStructure.name}  
+  - **Example**: ${selectedStructure.example}  
+  - **Options**: ${options.join(", ")} (For "Multiple Statements - How Many Correct," adjust to three-statement options if applicable)  
+- Adapt the deeply researched content to fit this structure creatively and precisely.  
+
+**Response Structure:**  
+- For each MCQ, use this EXACT structure with PLAIN TEXT headers:  
+  Question: [Full question text, following the selected UPSC structure, rich with depth and complexity]  
+  Options:  
+  (a) [Option A]  
+  (b) [Option B]  
+  (c) [Option C]  
+  (d) [Option D]  
+  Correct Answer: [Single lowercase letter: a, b, c, or d, corresponding to the correct option. Do NOT include parentheses, phrases like "Only two," or any text beyond the single letter. For "Multiple Statements - How Many Correct," the Correct Answer must be the letter matching the correct option (e.g., 'c' for '(c) Only two').]  
+  Explanation: [Detailed explanation, 3-5 sentences, weaving chapter content with broader knowledge, justifying why the selected option is correct and others are incorrect. Conclude with: "Thus, the correct answer is (option letter) because [reason]."]  
+- Separate each section with EXACTLY TWO newlines (\n\n).  
+- For multiple MCQs, separate each MCQ with "----" on a new line.  
+- Start the response directly with "Question:"—do NOT include any introductory text.  
+- **Special Note for Single Correct Answer Structure**: Include the statements (A-D) directly under the Question text, each statement on a new line.  
+- **Special Note for Multiple Statements Structures**: List the statements under the Question text using decimal numbers (e.g., "1.", "2.", "3.", "4."), each statement on a new line. For three statements, use options: "(a) None," "(b) Only one," "(c) Only two," "(d) All three."  
+
+**Special Instructions for Specific Categories:**  
+- For "Polity": Use the Laxmikanth's Indian Polity book (File ID: ${fileIds.Polity}), ensuring questions cover constitutional framework, governance, and political dynamics comprehensively.  
+- For "Science": Focus on the Science section of the Disha IAS Previous Year Papers (File ID: ${fileIds.Science}), covering Physics, Chemistry, Biology, and Science & Technology, extrapolating to cutting-edge historical contexts.  
+- For "CSAT": Use the CSAT section (File ID: ${fileIds.CSAT}), integrating complex logical extensions.  
+- For "PreviousYearPapers": Base on the entire Disha IAS book (File ID: ${fileIds.PreviousYearPapers}), weaving in advanced interpretations.  
+
+**Now, generate ${count} MCQ${count > 1 ? 's' : ''} based on the book: "${bookInfo.bookName}" (File ID: ${fileId}) using the "${selectedStructure.name}" structure, focusing on "${selectedTheme}" within "${selectedChapter || 'entire book'}":**
+`;
 
     await openai.beta.threads.messages.create(threadId, {
       role: "user",
@@ -1118,7 +931,7 @@ async function generateMCQs(query, category, userId, count, chapter, retryCount 
 
     const run = await openai.beta.threads.runs.create(threadId, {
       assistant_id: assistantId,
-      tools: category === "Atlas" ? [] : [{ type: "file_search" }],
+      tools: [{ type: "file_search" }],
     });
 
     if (!run || !run.id) {
@@ -1211,6 +1024,7 @@ async function generateMCQs(query, category, userId, count, chapter, retryCount 
     releaseLock(threadId);
   }
 }
+
 app.post("/ask", async (req, res) => {
   try {
     if (!req.body) {
@@ -1241,7 +1055,7 @@ app.post("/ask", async (req, res) => {
       const subjectMapping = {
         Polity: ["Polity"],
         History: ["Spectrum", "TamilnaduHistory", "ArtAndCulture"],
-        Geography: ["FundamentalGeography", "IndianGeography", "Atlas"],
+        Geography: ["FundamentalGeography", "IndianGeography"],
         Science: ["Science"],
         Environment: ["Environment"],
         Economy: ["Economy"],
@@ -1285,14 +1099,8 @@ app.post("/ask", async (req, res) => {
         ]).toArray();
     
         let selectedTheme, randomChapter;
-        if (themes.length === 0) {
-          console.warn(`No themes available for ${mappedSubject}, using default chapter`);
-          randomChapter = Object.keys(chapterToUnitMap).find(key => chapterToUnitMap[key].includes("Chapter 1") && key.includes(mappedSubject)) || "Chapter 1";
-          selectedTheme = `Theme: ${mappedSubject} - Subtheme: General - Sub-subtheme: Concepts`;
-        } else {
-          selectedTheme = themes[0].themes[Math.floor(Math.random() * themes[0].themes.length)];
-          randomChapter = themes[0].chapter;
-        }
+        selectedTheme = themes[0].themes[Math.floor(Math.random() * themes[0].themes.length)];
+        randomChapter = themes[0].chapter;
     
         const bookInfo = categoryToBookMap[mappedSubject];
         if (!bookInfo) {
@@ -1495,6 +1303,7 @@ app.post("/ask", async (req, res) => {
     res.status(500).json({ error: "AI service error", details: error.message });
   }
 });
+
 // New leaderboard endpoints
 app.post("/battleground/submit", async (req, res) => {
   try {
