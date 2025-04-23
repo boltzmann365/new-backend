@@ -40,7 +40,7 @@ app.use((err, req, res, next) => {
   res.setHeader("Access-Control-Allow-Credentials", "true");
 
   console.error(`Error in request to ${req.path}:`, err.message);
-  res.status(500).json({ error: "Internal Server Error", details: err.message });
+  res.status(500).  res.status(500).json({ error: "Internal Server Error", details: err.message });
 });
 
 app.use((req, res, next) => {
@@ -77,6 +77,8 @@ async function connectToMongoDB() {
     mongoConnected = true;
     await db.collection("mcqs").createIndex({ book: 1, category: 1, chapter: 1 });
     await db.collection("battleground_rankings").createIndex({ score: -1, date: 1 });
+    // Add index for users collection
+    await db.collection("users").createIndex({ email: 1 }, { unique: true });
   } catch (error) {
     console.error("Failed to connect to MongoDB:", error.message);
     mongoConnected = false;
@@ -1025,6 +1027,47 @@ You are an AI designed to create an elite UPSC training camp for the TrainWithMe
   }
 }
 
+// New endpoint to save user data
+app.post("/save-user", async (req, res) => {
+  try {
+    const { email, username } = req.body;
+
+    if (!email || !username) {
+      return res.status(400).json({ error: "Missing required fields: email and username are required" });
+    }
+
+    if (!mongoConnected) {
+      console.warn("MongoDB not connected, cannot save user data");
+      return res.status(500).json({ error: "Database not connected" });
+    }
+
+    // Save or update user in the database
+    const userData = {
+      email,
+      username,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+
+    // Use upsert to update if exists, or insert if new
+    await db.collection("users").updateOne(
+      { email }, // Match by email
+      { $set: userData }, // Update or set the data
+      { upsert: true } // Insert if not found
+    );
+
+    console.log(`Saved/Updated user: ${email}, username: ${username}`);
+    res.status(200).json({ message: "User saved successfully" });
+  } catch (error) {
+    console.error(`Error saving user data for email=${req.body.email || 'unknown'}:`, error.message);
+    if (error.code === 11000) { // Duplicate key error (email already exists)
+      res.status(400).json({ error: "User with this email already exists" });
+    } else {
+      res.status(500).json({ error: "Failed to save user", details: error.message });
+    }
+  }
+});
+
 app.post("/ask", async (req, res) => {
   try {
     if (!req.body) {
@@ -1347,7 +1390,6 @@ function parseSingleMCQ(rawResponse) {
   const optionsIndex = sections.findIndex(s => s.startsWith("Options:"));
   const correctAnswerIndex = sections.findIndex(s => s.startsWith("Correct Answer:"));
   const explanationIndex = sections.findIndex(s => s.startsWith("Explanation:"));
-
   let questionLines = [];
   if (questionIndex !== -1) {
     if (optionsIndex !== -1) {
