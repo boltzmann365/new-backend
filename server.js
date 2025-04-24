@@ -887,7 +887,7 @@ You are an AI designed to create an elite UPSC training camp for the TrainWithMe
 - Generate ${count} MCQ${count > 1 ? 's' : ''} inspired by the specified chapter ("${selectedChapter || 'entire book'}") of the book (${bookInfo.bookName}).  
 - **Theme-Based Focus**: Base this MCQ (question ${questionCount}) on the theme: "${selectedTheme}". Use the chapter content (File ID: ${fileId}) as the primary source, but interpret the theme broadly to include related subthemes or sub-subthemes.  
 - **Even Distribution**: Avoid fixating on overused figures or events unless tied to "${selectedTheme}" in a fresh way. For science, avoid overused topics like Newton's laws unless uniquely relevant to "${selectedTheme}".  
-- **Balance Thematic and Fact-Based Questions**: Ensure a 50/50 mix of thematic questions (testing conceptual understanding, e.g., thermodynamics principles) and fact-based questions (testing specific details, e.g., "The atomic number of Carbon is..."). Include precise data like scientific constants, formulas, or discoveries from the chapter where applicable.  
+- **Balance Thematic and Fact-Based Questions**: Ensure a 20/80 mix of thematic questions (testing conceptual understanding, e.g., thermodynamics principles) and fact-based questions (testing specific details, e.g., "The atomic number of Carbon is...").give fact based question more priority. Include precise data like scientific constants, formulas, or discoveries from the chapter where applicable.  
 - **Maximum Complexity and Unpredictability**: Craft challenging, unique MCQs that test deep understanding, critical thinking, and analytical skills at an elite UPSC level. Avoid predictable patterns:
   - For "Multiple Statements - How Many Correct," ensure correct answers are evenly distributed (e.g., "only one" as likely as "only two" or "only three"). Include subtle distractors and false statements to make "only one" or "none" viable.
   - For "Assertion and Reason," create nuanced assertions and reasons with complex relationships (e.g., partial truths, misleading reasons) to avoid obvious answers like option A. Vary correct options (a, b, c, d) evenly.
@@ -1354,12 +1354,15 @@ app.post("/battleground/submit", async (req, res) => {
     if (!username || typeof score !== "number") {
       throw new Error("Missing or invalid username or score");
     }
-    await db.collection("battleground_rankings").insertOne({
-      username,
-      score,
-      date: new Date()
-    });
-    const rankings = await db.collection("battleground_rankings").find()
+    // Update or insert the user's score (upsert)
+    await db.collection("battleground_rankings").updateOne(
+      { username }, // Match by username
+      { $set: { score, date: new Date() } }, // Update score and date
+      { upsert: true } // Insert if not found
+    );
+    // Fetch updated rankings
+    const rankings = await db.collection("battleground_rankings")
+      .find({}, { projection: { username: 1, score: 1, _id: 0 } }) // Exclude date and _id
       .sort({ score: -1, date: 1 })
       .limit(50)
       .toArray();
@@ -1372,7 +1375,8 @@ app.post("/battleground/submit", async (req, res) => {
 
 app.get("/battleground/leaderboard", async (req, res) => {
   try {
-    const rankings = await db.collection("battleground_rankings").find()
+    const rankings = await db.collection("battleground_rankings")
+      .find({}, { projection: { username: 1, score: 1, _id: 0 } }) // Exclude date and _id
       .sort({ score: -1, date: 1 })
       .limit(50)
       .toArray();
