@@ -76,9 +76,38 @@ async function connectToMongoDB() {
     db = client.db("trainwithme");
     mongoConnected = true;
     await db.collection("mcqs").createIndex({ book: 1, category: 1, chapter: 1 });
+    
+    // Drop existing index on battleground_rankings to avoid conflicts
+    await db.collection("battleground_rankings").dropIndexes();
+    
+    // Clean up duplicates in battleground_rankings by keeping the latest entry per username
+    const rankings = await db.collection("battleground_rankings")
+      .aggregate([
+        { $sort: { username: 1, date: -1 } }, // Sort by username and date (latest first)
+        {
+          $group: {
+            _id: "$username",
+            latestDoc: { $first: "$$ROOT" } // Keep the latest document for each username
+          }
+        },
+        { $replaceRoot: { newRoot: "$latestDoc" } }
+      ])
+      .toArray();
+    
+    // Drop and reinsert the cleaned data
+    await db.collection("battleground_rankings").drop();
+    if (rankings.length > 0) {
+      await db.collection("battleground_rankings").insertMany(rankings);
+    }
+    
+    // Create a unique index on username and a compound index for sorting
+    await db.collection("battleground_rankings").createIndex({ username: 1 }, { unique: true });
     await db.collection("battleground_rankings").createIndex({ score: -1, date: 1 });
+    
     // Add index for users collection
     await db.collection("users").createIndex({ email: 1 }, { unique: true });
+    
+    console.log("MongoDB setup completed with unique index on battleground_rankings.username");
   } catch (error) {
     console.error("Failed to connect to MongoDB:", error.message);
     mongoConnected = false;
@@ -1355,11 +1384,13 @@ app.post("/battleground/submit", async (req, res) => {
       throw new Error("Missing or invalid username or score");
     }
     // Update or insert the user's score (upsert)
-    await db.collection("battleground_rankings").updateOne(
+    const result = await db.collection("battleground_rankings").updateOne(
       { username }, // Match by username
       { $set: { score, date: new Date() } }, // Update score and date
       { upsert: true } // Insert if not found
     );
+    console.log(`Updated/Inserted score for ${username}: score=${score}, modifiedCount=${result.modifiedCount}, upsertedCount=${result.upsertedCount}`);
+    
     // Fetch updated rankings
     const rankings = await db.collection("battleground_rankings")
       .find({}, { projection: { username: 1, score: 1, _id: 0 } }) // Exclude date and _id
