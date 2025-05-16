@@ -64,7 +64,7 @@ connectToMongoDB(process.env.MONGODB_URI).then(({ db: database, mongoConnected: 
   process.exit(1);
 });
 
-// Category to Book Map (simplified)
+// Category to Book Map
 const categoryToBookMap = {
   TamilnaduHistory: { bookName: "Tamilnadu History Book" },
   Spectrum: { bookName: "Spectrum Book" },
@@ -80,17 +80,39 @@ const categoryToBookMap = {
   Polity: { bookName: "Laxmikanth Book" }
 };
 
-// Endpoint to fetch Laxmikanth MCQs for a user, excluding seen MCQs
-app.post("/user/get-laxmikanth-mcqs", async (req, res) => {
+// Endpoint to fetch MCQs for a specified book/category for a user, resetting seen MCQs if necessary
+app.post("/user/get-book-mcqs", async (req, res) => {
   try {
-    const { userId } = req.body;
+    console.log("Request body:", req.body);
+    const { userId, book, requestedCount, position } = req.body;
+
+    // Validate request parameters
     if (!userId) {
+      console.log("Validation failed: Missing userId");
       return res.status(400).json({ error: "Missing userId in request body" });
+    }
+    if (!book || !categoryToBookMap[book]) {
+      console.log(`Validation failed: Invalid or missing book - ${book}`);
+      return res.status(400).json({ error: "Missing or invalid book in request body. Valid books are: " + Object.keys(categoryToBookMap).join(", ") });
+    }
+    if (requestedCount === undefined || typeof requestedCount !== "number") {
+      console.log(`Validation failed: Invalid requestedCount - ${requestedCount}`);
+      return res.status(400).json({ error: "Missing or invalid requestedCount in request body" });
+    }
+    if (requestedCount !== 0 && requestedCount <= 0) {
+      console.log(`Validation failed: requestedCount must be positive - ${requestedCount}`);
+      return res.status(400).json({ error: "requestedCount must be a positive number or 0 for LAW mode" });
+    }
+    if (position !== undefined && (typeof position !== "number" || position < 0)) {
+      console.log(`Validation failed: Invalid position - ${position}`);
+      return res.status(400).json({ error: "Position must be a non-negative number" });
     }
 
     if (!mongoConnected) {
       return res.status(503).json({ error: "Database not connected" });
     }
+
+    const category = book; // The 'book' parameter directly maps to the category (e.g., "Polity", "Economy")
 
     // Fetch seen MCQ IDs for the user
     const seenMcqs = await db.collection("user_seen_mcqs")
@@ -98,20 +120,71 @@ app.post("/user/get-laxmikanth-mcqs", async (req, res) => {
       .toArray();
     const seenMcqIds = seenMcqs.map(entry => entry.mcqId);
 
-    // Fetch MCQs from the mcqs collection for category "Polity", excluding seen MCQs
-    const mcqs = await db.collection("mcqs")
-      .find({
-        category: "Polity",
-        _id: { $nin: seenMcqIds.map(id => new ObjectId(id)) }
-      })
-      .sort({ createdAt: -1 }) // Latest first
+    // Fetch all MCQ IDs for the specified category to determine which ones the user has seen
+    const categoryMcqs = await db.collection("mcqs")
+      .find({ category })
       .toArray();
+    const categoryMcqIds = categoryMcqs.map(mcq => mcq._id.toString());
 
-    if (mcqs.length === 0) {
-      return res.status(404).json({ error: "No new MCQs available for this user." });
+    // Filter seen MCQs to only include those in the specified category
+    const seenCategoryMcqIds = seenMcqIds.filter(id => categoryMcqIds.includes(id));
+
+    // Fetch unseen MCQs for the specified category
+    let mcqs;
+    if (requestedCount === 0) {
+      // LAW mode: Fetch one MCQ at the specified position (or the first unseen MCQ if position is not specified)
+      const query = {
+        category,
+        _id: { $nin: seenCategoryMcqIds.map(id => new ObjectId(id)) }
+      };
+      const options = {
+        sort: { createdAt: -1 }
+      };
+      if (position !== undefined) {
+        // Skip to the specified position among unseen MCQs
+        options.skip = position;
+        options.limit = 1;
+      } else {
+        // Fetch the first unseen MCQ
+        options.limit = 1;
+      }
+      mcqs = await db.collection("mcqs")
+        .find(query, options)
+        .toArray();
+      console.log(`LAW mode: Fetched ${mcqs.length} MCQ(s) at position ${position !== undefined ? position : 0} for user ${userId} in category ${category}`);
+    } else {
+      // WIS mode: Fetch the requested number of MCQs
+      mcqs = await db.collection("mcqs")
+        .find({
+          category,
+          _id: { $nin: seenCategoryMcqIds.map(id => new ObjectId(id)) }
+        })
+        .sort({ createdAt: -1 })
+        .toArray();
+
+      if (mcqs.length < requestedCount) {
+        console.log(`Not enough unseen MCQs (${mcqs.length}/${requestedCount}) for user ${userId} in category ${category}. Resetting seen MCQs for this category.`);
+        await db.collection("user_seen_mcqs").deleteMany({
+          userId,
+          mcqId: { $in: seenCategoryMcqIds }
+        });
+        console.log(`Reset ${seenCategoryMcqIds.length} seen MCQs for user ${userId} in category ${category}.`);
+
+        mcqs = await db.collection("mcqs")
+          .find({ category })
+          .sort({ createdAt: -1 })
+          .limit(requestedCount)
+          .toArray();
+      } else {
+        mcqs = mcqs.slice(0, requestedCount);
+      }
     }
 
-    console.log(`Fetched ${mcqs.length} unseen MCQs for user ${userId}`);
+    if (mcqs.length === 0) {
+      return res.status(404).json({ error: `No MCQs available for category ${category}.` });
+    }
+
+    console.log(`Fetched ${mcqs.length} MCQs for user ${userId} (requested: ${requestedCount === 0 ? 'one' : requestedCount}) in category ${category}`);
     res.status(200).json({ mcqs });
   } catch (error) {
     console.error("Error fetching user MCQs:", error.message, error.stack);
