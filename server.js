@@ -7,7 +7,7 @@ dotenv.config();
 const app = express();
 
 // CORS Configuration
-const allowedOrigins = ["https://trainwithme.in", "http://localhost:3000"];
+const allowedOrigins = ["https://trainwithme.in", "http://localhost:3000", "http://localhost:3001"];
 app.use(cors({
   origin: allowedOrigins,
   methods: ["GET", "POST", "OPTIONS"],
@@ -47,6 +47,7 @@ async function connectToMongoDB(uri) {
       { userId: 1, mcqId: 1 },
       { unique: true, background: true }
     );
+    await db.collection("current_affairs_articles").createIndex({ date: -1, category: 1 }, { background: true }); // Added index
     console.log("MongoDB indexes created");
   } catch (error) {
     console.error("Failed to connect to MongoDB:", error.message);
@@ -390,6 +391,41 @@ app.get("/battleground/leaderboard", async (req, res) => {
   } catch (error) {
     console.error("Error in /battleground/leaderboard:", error.message);
     res.status(500).json({ error: "Failed to fetch leaderboard", details: error.message });
+  }
+});
+
+// Endpoint to fetch current affairs articles
+app.get("/admin/get-current-affairs-articles", async (req, res) => {
+  try {
+    if (!mongoConnected || !db) {
+      console.error("MongoDB not connected");
+      return res.status(503).json({ error: "Database not connected" });
+    }
+
+    const { date, category, page = 1, limit = 10 } = req.query;
+    const query = {};
+    if (date) query.date = date;
+    if (category) query.category = category;
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const articles = await db.collection("current_affairs_articles")
+      .find(query)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .toArray();
+
+    const totalArticles = await db.collection("current_affairs_articles").countDocuments(query);
+
+    console.log(`Fetched ${articles.length} articles for date=${date || 'ALL'}, category=${category || 'ALL'}, page=${page}, limit=${limit}`);
+    res.status(200).json({
+      articles,
+      totalArticles,
+      currentPage: parseInt(page)
+    });
+  } catch (error) {
+    console.error("Error fetching articles:", error.message, error.stack);
+    res.status(500).json({ error: "Failed to fetch articles", details: error.message });
   }
 });
 
