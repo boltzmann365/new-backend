@@ -7,16 +7,34 @@ dotenv.config();
 const app = express();
 
 // CORS Configuration
-const allowedOrigins = ["https://trainwithme.in", "http://localhost:3000", "http://localhost:3001"];
+const allowedOrigins = [
+  "https://trainwithme.in",
+  "http://localhost:3000",
+  "https://localhost:3000",
+  "http://localhost:3001",
+  "https://trainwithme-backend.vercel.app", // Allow backend's own domain
+];
+
 app.use(cors({
-  origin: allowedOrigins,
+  origin: (origin, callback) => {
+    // Allow requests with no origin (e.g., server-to-server, Postman)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) {
+      callback(null, origin);
+    } else {
+      console.warn(`Blocked CORS request from origin: ${origin}`);
+      callback(new Error(`CORS policy: Origin ${origin} not allowed`));
+    }
+  },
   methods: ["GET", "POST", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
-  credentials: true
+  credentials: true,
+  optionsSuccessStatus: 204, // Ensure preflight requests return 204
 }));
 
+// Log all requests for debugging
 app.use((req, res, next) => {
-  console.log(`Request: ${req.method} ${req.path}, Origin: ${req.headers.origin}`);
+  console.log(`Request: ${req.method} ${req.path}, Origin: ${req.headers.origin || 'none'}, Headers: ${JSON.stringify(req.headers)}`);
   next();
 });
 
@@ -47,10 +65,11 @@ async function connectToMongoDB(uri) {
       { userId: 1, mcqId: 1 },
       { unique: true, background: true }
     );
-    await db.collection("current_affairs_articles").createIndex({ date: -1, category: 1 }, { background: true }); // Added index
+    await db.collection("current_affairs_articles").createIndex({ date: -1, category: 1 }, { background: true });
+    await db.collection("parsed_current_affairs").createIndex({ createdAt: -1 }, { background: true }); // Added for NewsGenerator
     console.log("MongoDB indexes created");
   } catch (error) {
-    console.error("Failed to connect to MongoDB:", error.message);
+    console.error("Failed to connect to MongoDB:", error.message, error.stack);
     mongoConnected = false;
     throw error;
   }
@@ -81,7 +100,7 @@ const categoryToBookMap = {
   Polity: { bookName: "Laxmikanth Book" }
 };
 
-// Endpoint to fetch MCQs for a specified book/category for a user, resetting seen MCQs if necessary
+// Endpoint to fetch MCQs for a specified book/category for a user
 app.post("/user/get-book-mcqs", async (req, res) => {
   try {
     console.log("Request body:", req.body);
@@ -109,11 +128,12 @@ app.post("/user/get-book-mcqs", async (req, res) => {
       return res.status(400).json({ error: "Position must be a non-negative number" });
     }
 
-    if (!mongoConnected) {
+    if (!mongoConnected || !db) {
+      console.error("Database not connected");
       return res.status(503).json({ error: "Database not connected" });
     }
 
-    const category = book; // The 'book' parameter directly maps to the category (e.g., "Polity", "Economy")
+    const category = book;
 
     // Fetch seen MCQ IDs for the user
     const seenMcqs = await db.collection("user_seen_mcqs")
@@ -121,7 +141,7 @@ app.post("/user/get-book-mcqs", async (req, res) => {
       .toArray();
     const seenMcqIds = seenMcqs.map(entry => entry.mcqId);
 
-    // Fetch all MCQ IDs for the specified category to determine which ones the user has seen
+    // Fetch all MCQ IDs for the specified category
     const categoryMcqs = await db.collection("mcqs")
       .find({ category })
       .toArray();
@@ -130,10 +150,10 @@ app.post("/user/get-book-mcqs", async (req, res) => {
     // Filter seen MCQs to only include those in the specified category
     const seenCategoryMcqIds = seenMcqIds.filter(id => categoryMcqIds.includes(id));
 
-    // Fetch unseen MCQs for the specified category
+    // Fetch unseen MCQs
     let mcqs;
     if (requestedCount === 0) {
-      // LAW mode: Fetch one MCQ at the specified position (or the first unseen MCQ if position is not specified)
+      // LAW mode
       const query = {
         category,
         _id: { $nin: seenCategoryMcqIds.map(id => new ObjectId(id)) }
@@ -142,11 +162,9 @@ app.post("/user/get-book-mcqs", async (req, res) => {
         sort: { createdAt: -1 }
       };
       if (position !== undefined) {
-        // Skip to the specified position among unseen MCQs
         options.skip = position;
         options.limit = 1;
       } else {
-        // Fetch the first unseen MCQ
         options.limit = 1;
       }
       mcqs = await db.collection("mcqs")
@@ -154,7 +172,7 @@ app.post("/user/get-book-mcqs", async (req, res) => {
         .toArray();
       console.log(`LAW mode: Fetched ${mcqs.length} MCQ(s) at position ${position !== undefined ? position : 0} for user ${userId} in category ${category}`);
     } else {
-      // WIS mode: Fetch the requested number of MCQs
+      // WIS mode
       mcqs = await db.collection("mcqs")
         .find({
           category,
@@ -164,7 +182,7 @@ app.post("/user/get-book-mcqs", async (req, res) => {
         .toArray();
 
       if (mcqs.length < requestedCount) {
-        console.log(`Not enough unseen MCQs (${mcqs.length}/${requestedCount}) for user ${userId} in category ${category}. Resetting seen MCQs for this category.`);
+        console.log(`Not enough unseen MCQs (${mcqs.length}/${requestedCount}) for user ${userId} in category ${category}. Resetting seen MCQs.`);
         await db.collection("user_seen_mcqs").deleteMany({
           userId,
           mcqId: { $in: seenCategoryMcqIds }
@@ -201,20 +219,18 @@ app.post("/user/mark-mcqs-seen", async (req, res) => {
       return res.status(400).json({ error: "Missing or invalid userId or mcqIds in request body" });
     }
 
-    if (!mongoConnected) {
+    if (!mongoConnected || !db) {
       return res.status(503).json({ error: "Database not connected" });
     }
 
-    // Prepare documents to insert
     const seenDocs = mcqIds.map(mcqId => ({
       userId,
       mcqId,
       seenAt: new Date()
     }));
 
-    // Insert seen MCQs, ignoring duplicates
     await db.collection("user_seen_mcqs").insertMany(seenDocs, { ordered: false }).catch(err => {
-      if (err.code !== 11000) throw err; // Ignore duplicate key errors
+      if (err.code !== 11000) throw err;
     });
 
     console.log(`Marked ${mcqIds.length} MCQs as seen for user ${userId}`);
@@ -233,15 +249,14 @@ app.post("/user/report-mcq", async (req, res) => {
       return res.status(400).json({ error: "Missing userId, mcqId, or mcq in request body" });
     }
 
-    if (!mongoConnected) {
+    if (!mongoConnected || !db) {
       return res.status(503).json({ error: "Database not connected" });
     }
 
-    // Save the reported MCQ to the reported_mcqs collection
     const reportDoc = {
       userId,
       mcqId,
-      mcq, // Store the full MCQ object for admin review
+      mcq,
       reportedAt: new Date()
     };
 
@@ -258,7 +273,7 @@ app.post("/user/report-mcq", async (req, res) => {
   }
 });
 
-// Endpoint for admin to update an MCQ and remove it from reported_mcqs
+// Endpoint for admin to update an MCQ
 app.post("/admin/update-mcq", async (req, res) => {
   try {
     const { mcqId, updatedMcq } = req.body;
@@ -266,11 +281,10 @@ app.post("/admin/update-mcq", async (req, res) => {
       return res.status(400).json({ error: "Missing mcqId or updatedMcq in request body" });
     }
 
-    if (!mongoConnected) {
+    if (!mongoConnected || !db) {
       return res.status(503).json({ error: "Database not connected" });
     }
 
-    // Update the MCQ in the mcqs collection
     const updateResult = await db.collection("mcqs").updateOne(
       { _id: new ObjectId(mcqId) },
       { $set: { mcq: updatedMcq, chapter: updatedMcq.chapter } }
@@ -280,7 +294,6 @@ app.post("/admin/update-mcq", async (req, res) => {
       return res.status(404).json({ error: "MCQ not found in mcqs collection" });
     }
 
-    // Remove the MCQ from reported_mcqs
     await db.collection("reported_mcqs").deleteOne({ mcqId });
 
     console.log(`Updated MCQ ${mcqId} and removed from reported_mcqs`);
@@ -298,8 +311,8 @@ app.post("/save-user", async (req, res) => {
     if (!email || !username) {
       return res.status(400).json({ error: "Missing required fields: email and username" });
     }
-    if (!mongoConnected) {
-      return res.status(500).json({ error: "Database not connected" });
+    if (!mongoConnected || !db) {
+      return res.status(503).json({ error: "Database not connected" });
     }
     const normalizedEmail = email.toLowerCase();
     const userData = {
@@ -316,7 +329,7 @@ app.post("/save-user", async (req, res) => {
     console.log(`Saved/Updated user: ${normalizedEmail}, username: ${username}`);
     res.status(200).json({ message: "User saved successfully" });
   } catch (error) {
-    console.error(`Error saving user:`, error.message);
+    console.error(`Error saving user:`, error.message, error.stack);
     res.status(error.code === 11000 ? 400 : 500).json({
       error: error.code === 11000 ? "User with this email exists" : "Failed to save user",
       details: error.message
@@ -331,7 +344,7 @@ app.post("/user/info", async (req, res) => {
     if (!email) {
       return res.status(400).json({ error: "Missing email in request body" });
     }
-    if (!mongoConnected) {
+    if (!mongoConnected || !db) {
       return res.status(503).json({ error: "Database not connected" });
     }
     const normalizedEmail = email.toLowerCase();
@@ -344,7 +357,7 @@ app.post("/user/info", async (req, res) => {
     }
     res.status(200).json({ user });
   } catch (error) {
-    console.error("Error fetching user info:", error.message);
+    console.error("Error fetching user info:", error.message, error.stack);
     res.status(500).json({ error: "Failed to fetch user info", details: error.message });
   }
 });
@@ -354,9 +367,9 @@ app.post("/battleground/submit", async (req, res) => {
   try {
     const { username, score } = req.body;
     if (!username || typeof score !== "number") {
-      throw new Error("Missing or invalid username or score");
+      return res.status(400).json({ error: "Missing or invalid username or score" });
     }
-    if (!mongoConnected) {
+    if (!mongoConnected || !db) {
       return res.status(503).json({ error: "Database not connected" });
     }
     const result = await db.collection("battleground_rankings").updateOne(
@@ -370,16 +383,16 @@ app.post("/battleground/submit", async (req, res) => {
       .sort({ score: -1, date: 1 })
       .limit(50)
       .toArray();
-    res.json({ rankings });
+    res.status(200).json({ rankings });
   } catch (error) {
-    console.error("Error in /battleground/submit:", error.message);
+    console.error("Error in /battleground/submit:", error.message, error.stack);
     res.status(500).json({ error: "Failed to submit score", details: error.message });
   }
 });
 
 app.get("/battleground/leaderboard", async (req, res) => {
   try {
-    if (!mongoConnected) {
+    if (!mongoConnected || !db) {
       return res.status(503).json({ error: "Database not connected" });
     }
     const rankings = await db.collection("battleground_rankings")
@@ -387,9 +400,9 @@ app.get("/battleground/leaderboard", async (req, res) => {
       .sort({ score: -1, date: 1 })
       .limit(50)
       .toArray();
-    res.json({ rankings });
+    res.status(200).json({ rankings });
   } catch (error) {
-    console.error("Error in /battleground/leaderboard:", error.message);
+    console.error("Error in /battleground/leaderboard:", error.message, error.stack);
     res.status(500).json({ error: "Failed to fetch leaderboard", details: error.message });
   }
 });
@@ -407,21 +420,26 @@ app.get("/admin/get-current-affairs-articles", async (req, res) => {
     if (date) query.date = date;
     if (category) query.category = category;
 
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const pageNum = Math.max(1, parseInt(page) || 1);
+    const limitNum = Math.max(1, parseInt(limit) || 10);
+    const skip = (pageNum - 1) * limitNum;
+
+    console.log(`Querying articles: date=${date || 'ALL'}, category=${category || 'ALL'}, page=${pageNum}, limit=${limitNum}`);
+
     const articles = await db.collection("current_affairs_articles")
       .find(query)
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(parseInt(limit))
+      .limit(limitNum)
       .toArray();
 
     const totalArticles = await db.collection("current_affairs_articles").countDocuments(query);
 
-    console.log(`Fetched ${articles.length} articles for date=${date || 'ALL'}, category=${category || 'ALL'}, page=${page}, limit=${limit}`);
+    console.log(`Fetched ${articles.length} articles`);
     res.status(200).json({
       articles,
       totalArticles,
-      currentPage: parseInt(page)
+      currentPage: pageNum
     });
   } catch (error) {
     console.error("Error fetching articles:", error.message, error.stack);
@@ -429,8 +447,59 @@ app.get("/admin/get-current-affairs-articles", async (req, res) => {
   }
 });
 
-// Start the server
-const PORT = process.env.USER_PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`User server running on port ${PORT}`);
+// Endpoint to fetch parsed current affairs documents (for NewsGenerator)
+app.get("/admin/get-parsed-current-affairs", async (req, res) => {
+  try {
+    if (!mongoConnected || !db) {
+      console.error("MongoDB not connected");
+      return res.status(503).json({ error: "Database not connected" });
+    }
+    const documents = await db.collection("parsed_current_affairs")
+      .find({})
+      .sort({ createdAt: -1 })
+      .toArray();
+    console.log(`Fetched ${documents.length} parsed documents`);
+    res.status(200).json({ documents });
+  } catch (error) {
+    console.error("Error fetching parsed documents:", error.message, error.stack);
+    res.status(500).json({ error: "Failed to fetch parsed documents", details: error.message });
+  }
 });
+
+// Endpoint to generate current affairs articles (for NewsGenerator)
+app.post("/admin/generate-current-affairs-article", async (req, res) => {
+  try {
+    const { documentId } = req.body;
+    if (!documentId) {
+      return res.status(400).json({ error: "Missing documentId in request body" });
+    }
+    if (!mongoConnected || !db) {
+      console.error("MongoDB not connected");
+      return res.status(503).json({ error: "Database not connected" });
+    }
+    const document = await db.collection("parsed_current_affairs").findOne({ _id: new ObjectId(documentId) });
+    if (!document) {
+      return res.status(404).json({ error: "Document not found" });
+    }
+    // Placeholder: Implement your article generation logic here
+    const articles = [
+      {
+        heading: document.job_metadata?.title || document.title || "Generated Article",
+        content: document.content || "This is a generated article based on the parsed document.",
+        imageUrl: document.imageUrl || null,
+        date: document.job_metadata?.date || document.date || new Date().toISOString().split('T')[0],
+        category: document.category || "General",
+        createdAt: new Date()
+      }
+    ];
+    await db.collection("current_affairs_articles").insertMany(articles);
+    console.log(`Generated ${articles.length} articles for document ${documentId}`);
+    res.status(200).json({ articles });
+  } catch (error) {
+    console.error("Error generating articles:", error.message, error.stack);
+    res.status(500).json({ error: "Failed to generate articles", details: error.message });
+  }
+});
+
+// Export for Vercel serverless
+module.exports = app;
