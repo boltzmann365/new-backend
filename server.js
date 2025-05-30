@@ -45,45 +45,100 @@ let db;
 let mongoConnected = false;
 
 async function connectToMongoDB(uri) {
-  const client = new MongoClient(uri);
-  try {
-    await client.connect();
-    console.log("Connected to MongoDB Atlas");
-    db = client.db("trainwithme");
-    mongoConnected = true;
-
-    // Create indexes for collections
-    await db.collection("mcqs").createIndex({ category: 1, createdAt: -1 });
-    await db.collection("users").createIndex({ email: 1 }, { unique: true });
-    await db.collection("battleground_rankings").createIndex({ username: 1 }, { unique: true });
-    await db.collection("battleground_rankings").createIndex({ score: -1, date: 1 });
-    await db.collection("user_seen_mcqs").createIndex(
-      { userId: 1, mcqId: 1 },
-      { unique: true, background: true }
-    );
-    await db.collection("reported_mcqs").createIndex(
-      { userId: 1, mcqId: 1 },
-      { unique: true, background: true }
-    );
-    await db.collection("current_affairs_articles").createIndex({ date: -1, category: 1 }, { background: true });
-    await db.collection("parsed_current_affairs").createIndex({ createdAt: -1 }, { background: true }); // Added for NewsGenerator
-    console.log("MongoDB indexes created");
-  } catch (error) {
-    console.error("Failed to connect to MongoDB:", error.message, error.stack);
-    mongoConnected = false;
-    throw error;
+  if (!uri) {
+    console.error("MONGODB_URI is undefined or not set in environment variables");
+    throw new Error("MONGODB_URI is not defined");
   }
-  return { client, db, mongoConnected };
+  console.log("Using MONGODB_URI:", uri.replace(/:([^:@]+)@/, ':****@')); // Mask password
+  const client = new MongoClient(uri, {
+    maxPoolSize: 10,
+    connectTimeoutMS: 20000, // Increased timeout
+    serverSelectionTimeoutMS: 20000,
+    retryWrites: true,
+    w: 'majority',
+    keepAlive: true,
+    retryReads: true
+  });
+  const maxRetries = 5;
+  let attempt = 1;
+
+  while (attempt <= maxRetries) {
+    try {
+      console.log(`Attempting MongoDB connection (Attempt ${attempt}/${maxRetries})`);
+      await client.connect();
+      console.log("Connected to MongoDB Atlas");
+      db = client.db("trainwithme");
+      mongoConnected = true;
+
+      // Create indexes
+      await db.collection("mcqs").createIndex({ category: 1, createdAt: -1 });
+      await db.collection("users").createIndex({ email: 1 }, { unique: true });
+      await db.collection("battleground_rankings").createIndex({ username: 1 }, { unique: true });
+      await db.collection("battleground_rankings").createIndex({ score: -1, date: 1 });
+      await db.collection("user_seen_mcqs").createIndex({
+        userId: 1,
+        mcqId: 1
+      }, {
+        unique: true,
+        background: false // Changed to false to ensure index creation
+      });
+      await db.collection("reported_mcqs").createIndex({
+        userId: 1,
+        mcqId: 1
+      }, {
+        unique: true,
+        background: false // Changed to false to ensure index creation
+      });
+      await db.collection("current_affairs_articles").createIndex({
+        date: -1,
+        category: 1
+      }, {
+        background: false
+      });
+      await db.collection("parsed_current_affairs").createIndex({
+        createdAt: -1
+      }, {
+        background: false
+      });
+      console.log("MongoDB indexes created");
+
+      // Monitor connection
+      client.on('error', (err) => {
+        console.error("MongoDB client error:", err.message);
+        mongoConnected = false;
+      });
+      client.on('close', () => {
+        console.warn("MongoDB connection closed");
+        mongoConnected = false;
+      });
+      return {
+        client,
+        db,
+        mongoConnected
+      };
+    } catch (error) {
+      console.error(`MongoDB connection attempt ${attempt} failed:`, error.code, error.message, error.stack);
+      if (attempt === maxRetries) {
+        mongoConnected = false;
+        throw error;
+      }
+      attempt++;
+      await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5s
+    }
+  }
 }
 
-connectToMongoDB(process.env.MONGODB_URI).then(({ db: database, mongoConnected: connected }) => {
+connectToMongoDB(process.env.MONGODB_URI).then(({
+  db: database,
+  mongoConnected: connected
+}) => {
   db = database;
   mongoConnected = connected;
+  console.log("MongoDB connection established successfully");
 }).catch(err => {
-  console.error("MongoDB connection failed:", err.message);
-  process.exit(1);
+  console.error("MongoDB connection failed permanently:", err.message, err.stack);
+  mongoConnected = false;
 });
-
 // Category to Book Map
 const categoryToBookMap = {
   TamilnaduHistory: { bookName: "Tamilnadu History Book" },
