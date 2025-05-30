@@ -6,11 +6,21 @@
     "start": "node server.js"
   },
   "dependencies": {
+    "@dqbd/tiktoken": "^1.0.21",
+    "axios": "^1.9.0",
+    "cheerio": "^1.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "mongodb": "^6.15.0",
     "mongoose": "^8.10.0",
-    "openai": "^4.83.0"
+    "natural": "^8.1.0",
+    "node-cron": "^4.0.7",
+    "openai": "^4.83.0",
+    "pdf2json": "^3.1.4",
+    "puppeteer": "^24.9.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
   },
   "engines": {
     "node": "18.x"
