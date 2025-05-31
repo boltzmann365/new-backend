@@ -52,12 +52,12 @@ async function connectToMongoDB(uri) {
   console.log("Using MONGODB_URI:", uri.replace(/:([^:@]+)@/, ':****@')); // Mask password
   const client = new MongoClient(uri, {
     maxPoolSize: 10,
-    connectTimeoutMS: 20000, // Increased timeout
+    connectTimeoutMS: 20000,
     serverSelectionTimeoutMS: 20000,
+    socketTimeoutMS: 45000, // Replace keepAlive with socketTimeoutMS
     retryWrites: true,
-    w: 'majority',
-    keepAlive: true,
-    retryReads: true
+    retryReads: true,
+    w: 'majority'
   });
   const maxRetries = 5;
   let attempt = 1;
@@ -75,31 +75,22 @@ async function connectToMongoDB(uri) {
       await db.collection("users").createIndex({ email: 1 }, { unique: true });
       await db.collection("battleground_rankings").createIndex({ username: 1 }, { unique: true });
       await db.collection("battleground_rankings").createIndex({ score: -1, date: 1 });
-      await db.collection("user_seen_mcqs").createIndex({
-        userId: 1,
-        mcqId: 1
-      }, {
-        unique: true,
-        background: false // Changed to false to ensure index creation
-      });
-      await db.collection("reported_mcqs").createIndex({
-        userId: 1,
-        mcqId: 1
-      }, {
-        unique: true,
-        background: false // Changed to false to ensure index creation
-      });
-      await db.collection("current_affairs_articles").createIndex({
-        date: -1,
-        category: 1
-      }, {
-        background: false
-      });
-      await db.collection("parsed_current_affairs").createIndex({
-        createdAt: -1
-      }, {
-        background: false
-      });
+      await db.collection("user_seen_mcqs").createIndex(
+        { userId: 1, mcqId: 1 },
+        { unique: true, background: false }
+      );
+      await db.collection("reported_mcqs").createIndex(
+        { userId: 1, mcqId: 1 },
+        { unique: true, background: false }
+      );
+      await db.collection("current_affairs_articles").createIndex(
+        { date: -1, category: 1 },
+        { background: false }
+      );
+      await db.collection("parsed_current_affairs").createIndex(
+        { createdAt: -1 },
+        { background: false }
+      );
       console.log("MongoDB indexes created");
 
       // Monitor connection
@@ -111,11 +102,7 @@ async function connectToMongoDB(uri) {
         console.warn("MongoDB connection closed");
         mongoConnected = false;
       });
-      return {
-        client,
-        db,
-        mongoConnected
-      };
+      return { client, db, mongoConnected };
     } catch (error) {
       console.error(`MongoDB connection attempt ${attempt} failed:`, error.code, error.message, error.stack);
       if (attempt === maxRetries) {
@@ -128,10 +115,7 @@ async function connectToMongoDB(uri) {
   }
 }
 
-connectToMongoDB(process.env.MONGODB_URI).then(({
-  db: database,
-  mongoConnected: connected
-}) => {
+connectToMongoDB(process.env.MONGODB_URI).then(({ db: database, mongoConnected: connected }) => {
   db = database;
   mongoConnected = connected;
   console.log("MongoDB connection established successfully");
