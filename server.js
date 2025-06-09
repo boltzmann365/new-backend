@@ -177,8 +177,8 @@ app.get("/favicon.png", (req, res) => res.status(204).end());
 // Endpoint to fetch QandA pairs
 app.get("/user/get-qanda", async (req, res) => {
   try {
-    const { userId, book, bookName, page = 1, limit = 10 } = req.query;
-    console.log(`Fetching QandA for userId: ${userId}, book: ${book}, bookName: ${bookName}, page: ${page}, limit: ${limit}`);
+    const { userId, book, bookName, category, page = 1, limit = 10 } = req.query;
+    console.log(`Fetching QandA for userId: ${userId}, book: ${book}, bookName: ${bookName}, category: ${category}, page: ${page}, limit: ${limit}`);
 
     if (!userId) {
       console.log(`Validation failed: Missing userId`);
@@ -196,10 +196,14 @@ app.get("/user/get-qanda", async (req, res) => {
     }
 
     const query = {};
+    // Add userId to query if pairs are user-specific
+    // query.userId = userId; // Uncomment if Q&A pairs have a userId field
     if (book) {
       query.bookName = categoryToBookMap[book].bookName;
     } else if (bookName && bookName !== "All") {
       query.bookName = bookName;
+    } else if (category && category !== "All") {
+      query.category = category; // Filter by category
     }
 
     const qanda = await db.collection("QandA")
@@ -209,7 +213,7 @@ app.get("/user/get-qanda", async (req, res) => {
       .limit(parseInt(limit))
       .toArray();
 
-    console.log(`Fetched ${qanda.length} QandA pairs for userId: ${userId}, book: ${book}, bookName: ${bookName}`);
+    console.log(`Fetched ${qanda.length} QandA pairs for query:`, query);
     res.status(200).json({ qanda });
   } catch (error) {
     console.error("Error fetching QandA:", error.message, error.stack);
@@ -315,3 +319,33 @@ app.listen(PORT, () => {
 
 // Export for Vercel serverless
 module.exports = app;
+// In server.js, add this endpoint
+// In server.js, replace or add this endpoint
+app.get("/user/get-profile", async (req, res) => {
+  try {
+    const { email } = req.query;
+    console.log(`Fetching profile for email: ${email}`);
+
+    if (!email) {
+      console.log(`Validation failed: Missing email`);
+      return res.status(400).json({ error: "Missing email" });
+    }
+
+    if (!mongoConnected || !db) {
+      console.error("Database not connected");
+      return res.status(503).json({ error: "Database not connected" });
+    }
+
+    const user = await db.collection("users").findOne({ email });
+    if (!user) {
+      console.log(`User not found for email: ${email}`);
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    console.log(`Fetched profile for email: ${email}`);
+    res.status(200).json({ user: { username: user.username, email: user.email } });
+  } catch (error) {
+    console.error("Error fetching profile:", error.message, error.stack);
+    res.status(500).json({ error: "Failed to fetch profile", details: error.message });
+  }
+});
