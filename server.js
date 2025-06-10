@@ -89,10 +89,6 @@ async function connectToMongoDB(uri) {
       await db.collection("users").createIndex({ email: 1 }, { unique: true });
       await db.collection("battleground_rankings").createIndex({ username: 1 }, { unique: true });
       await db.collection("battleground_rankings").createIndex({ score: -1, date: 1 });
-      await db.collection("user_seen_mcqs").createIndex(
-        { userId: 1, mcqId: 1 },
-        { unique: true, background: false }
-      );
       await db.collection("reported_mcqs").createIndex(
         { userId: 1, mcqId: 1 },
         { unique: true, background: false }
@@ -153,7 +149,7 @@ const categoryToBookMap = {
   Economy: { bookName: "Ramesh Singh Indian Economy Book", category: "Economy" },
   CSAT: { bookName: "Disha IAS Previous Year Papers (CSAT Section)", category: "CSAT" },
   CurrentAffairs: { bookName: "Vision IAS Current Affairs Magazine", category: "Current Affairs" },
-  PreviousYearPapers: { bookName: "Disha Publication’s UPSC Prelims Previous Year Papers", category: "Previous Year Papers" },
+  PreviousYearPapers: { bookName: "Disha Publication’s UPSC Prelims Previous Year Papers", category: "PreviousYearPapers" },
   Polity: { bookName: "Laxmikanth Indian Polity", category: "Politics" }
 };
 
@@ -196,14 +192,12 @@ app.get("/user/get-qanda", async (req, res) => {
     }
 
     const query = {};
-    // Add userId to query if pairs are user-specific
-    // query.userId = userId; // Uncomment if Q&A pairs have a userId field
     if (book) {
       query.bookName = categoryToBookMap[book].bookName;
     } else if (bookName && bookName !== "All") {
       query.bookName = bookName;
     } else if (category && category !== "All") {
-      query.category = category; // Filter by category
+      query.category = category;
     }
 
     const qanda = await db.collection("QandA")
@@ -224,11 +218,11 @@ app.get("/user/get-qanda", async (req, res) => {
 // Endpoint to fetch MCQs for a book
 app.post("/user/get-book-mcqs", async (req, res) => {
   try {
-    const { userId, book, requestedCount } = req.body;
-    console.log(`Fetching MCQs for userId: ${userId}, book: ${book}, requestedCount: ${requestedCount}`);
+    const { book, requestedCount } = req.body;
+    console.log(`Fetching MCQs for book: ${book}, requestedCount: ${requestedCount}`);
 
-    if (!userId || !book || !categoryToBookMap[book] || !requestedCount) {
-      console.log(`Validation failed: Missing or invalid parameters - userId: ${userId}, book: ${book}, requestedCount: ${requestedCount}`);
+    if (!book || !categoryToBookMap[book] || !requestedCount) {
+      console.log(`Validation failed: Missing or invalid parameters - book: ${book}, requestedCount: ${requestedCount}`);
       return res.status(400).json({ error: "Missing or invalid parameters" });
     }
 
@@ -237,29 +231,25 @@ app.post("/user/get-book-mcqs", async (req, res) => {
       return res.status(503).json({ error: "Database not connected" });
     }
 
-    const seenMcqs = await db.collection("user_seen_mcqs")
-      .find({ userId })
-      .project({ mcqId: 1 })
-      .toArray();
-    const seenMcqIds = seenMcqs.map(doc => doc.mcqId);
-    console.log(`Found ${seenMcqIds.length} seen MCQs for userId: ${userId}`);
-
     const query = {
-      category: categoryToBookMap[book].category, // Use mapped category
-      _id: { $nin: seenMcqIds.map(id => new ObjectId(id)) }
+      category: categoryToBookMap[book].category
     };
-    console.log("Executing query:", query);
+
+    // Log available MCQs
+    const totalAvailable = await db.collection("mcqs").countDocuments(query);
+    console.log(`Available MCQs for book "${book}" (category: "${categoryToBookMap[book].category}"): ${totalAvailable}`);
 
     const mcqs = await db.collection("mcqs")
-      .find(query)
-      .sort({ createdAt: -1 })
-      .limit(Math.min(requestedCount, 100))
+      .aggregate([
+        { $match: query },
+        { $sample: { size: Math.min(parseInt(requestedCount), 100) } }
+      ])
       .toArray();
 
-    console.log(`Fetched ${mcqs.length} MCQs for userId: ${userId}, book: ${book}`, mcqs);
+    console.log(`Fetched ${mcqs.length} MCQs for book: ${book}`);
     if (!mcqs || mcqs.length === 0) {
-      console.log(`No new MCQs found for userId: ${userId}, book: ${book}`);
-      return res.status(404).json({ error: "No new MCQs available" });
+      console.log(`No MCQs found for category: "${categoryToBookMap[book].category}"`);
+      return res.status(404).json({ error: `No MCQs available for category: ${categoryToBookMap[book].category}` });
     }
 
     res.status(200).json({ mcqs });
@@ -282,7 +272,6 @@ app.get("/admin/get-current-affairs-articles", async (req, res) => {
 
     const query = {};
     if (startDate) {
-      // Fetch articles from startDate to present
       query.date = { $gte: new Date(startDate).toISOString() };
     }
 
@@ -301,30 +290,11 @@ app.get("/admin/get-current-affairs-articles", async (req, res) => {
   }
 });
 
-// Global Error Middleware
-app.use((err, req, res, next) => {
-  console.error(`Unhandled error: ${err.message}, Stack: ${err.stack}`);
-  res.setHeader('Access-Control-Allow-Origin', allowedOrigins.includes(req.headers.origin) ? req.headers.origin : '*');
-  res.status(500).json({
-    error: "Internal server error",
-    details: err.message || "An unexpected error occurred"
-  });
-});
-
-// Start the server
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
-
-// Export for Vercel serverless
-module.exports = app;
-// In server.js, add this endpoint
-// In server.js, replace or add this endpoint
+// Endpoint to fetch user profile
 app.get("/user/get-profile", async (req, res) => {
   try {
     const { email } = req.query;
-    console.log(`Fetching profile for email: ${email}`);
+    console.log(`Fetching email: ${email}`);
 
     if (!email) {
       console.log(`Validation failed: Missing email`);
@@ -349,3 +319,58 @@ app.get("/user/get-profile", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch profile", details: error.message });
   }
 });
+
+// Batch fetch MCQs for multiple books/subjects in one request
+app.post("/user/get-multi-book-mcqs", async (req, res) => {
+  try {
+    const { books } = req.body; // books: [{ book, requestedCount }]
+    if (!Array.isArray(books) || books.length === 0) {
+      return res.status(400).json({ error: "Missing or invalid books array" });
+    }
+    if (!mongoConnected || !db) {
+      return res.status(503).json({ error: "Database not connected" });
+    }
+
+    // Prepare all queries
+    const queries = books.map(({ book, requestedCount }) => {
+      if (!book || !categoryToBookMap[book] || !requestedCount) return null;
+      return db.collection("mcqs")
+        .aggregate([
+          { $match: { category: categoryToBookMap[book].category } },
+          { $sample: { size: Math.min(parseInt(requestedCount), 100) } }
+        ])
+        .toArray()
+        .then(mcqs => ({ book, mcqs }));
+    }).filter(Boolean);
+
+    // Run all queries in parallel
+    const results = await Promise.all(queries);
+
+    // Flatten all MCQs into one array
+    const allMCQs = results.flatMap(r => r.mcqs);
+
+    res.status(200).json({ mcqs: allMCQs });
+  } catch (error) {
+    console.error("Error in get-multi-book-mcqs:", error.message, error.stack);
+    res.status(500).json({ error: "Failed to fetch MCQs", details: error.message });
+  }
+});
+
+// Global Error Middleware
+app.use((err, req, res, next) => {
+  console.error(`Unhandled error: ${err.message}, Stack: ${err.stack}`);
+  res.setHeader('Access-Control-Allow-Origin', allowedOrigins.includes(req.headers.origin) ? req.headers.origin : '*');
+  res.status(500).json({
+    error: "Internal server error",
+    details: err.message || "An unexpected error occurred"
+  });
+});
+
+// Start the server
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
+
+// Export for Vercel serverless
+module.exports = app;
