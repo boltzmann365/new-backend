@@ -6,20 +6,12 @@ const { MongoClient, ObjectId } = require("mongodb");
 dotenv.config();
 const app = express();
 
-// CORS Configuration
 const allowedOrigins = [
-  "https://trainwithme.in",
-  "http://localhost:3000",
-  "https://localhost:3000",
-  "http://localhost:3001",
-  "https://trainwithme-backend.vercel.app",
-  "https://trainwithme-backend-fpbqr9rqr-yogesh-yadavs-projects-b7fc36f0.vercel.app",
-  "https://backend-lyart-one-89.vercel.app",
-  "https://backend-krowav4fm-yogesh-yadavs-projects-b7fc36f0.vercel.app",
-  "https://backend-n5ubeeejd-yogesh-yadavs-projects-b7fc36f0.vercel.app",
-  "https://backend-production-d60b.up.railway.app",
-  "https://your-frontend.up.railway.app",
-  "https://frontend-1wn4bppay-yogesh-yadavs-projects-b7fc36f0.vercel.app",
+  "https://trainwithme.in", "http://localhost:3000", "https://localhost:3000", "http://localhost:3001",
+  "https://trainwithme-backend.vercel.app", "https://trainwithme-backend-fpbqr9rqr-yogesh-yadavs-projects-b7fc36f0.vercel.app",
+  "https://backend-lyart-one-89.vercel.app", "https://backend-krowav4fm-yogesh-yadavs-projects-b7fc36f0.vercel.app",
+  "https://backend-n5ubeeejd-yogesh-yadavs-projects-b7fc36f0.vercel.app", "https://backend-production-d60b.up.railway.app",
+  "https://your-frontend.up.railway.app", "https://frontend-1wn4bppay-yogesh-yadavs-projects-b7fc36f0.vercel.app",
   "https://frontend-9i4djmspa-yogesh-yadavs-projects-b7fc36f0.vercel.app"
 ];
 
@@ -54,7 +46,6 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 
-// MongoDB Setup
 let db;
 let mongoConnected = false;
 
@@ -137,7 +128,6 @@ connectToMongoDB(process.env.MONGODB_URI).then(({ db: database, mongoConnected: 
   mongoConnected = false;
 });
 
-// Category to Book Map
 const categoryToBookMap = {
   TamilnaduHistory: { bookName: "Tamilnadu History Book", category: "History" },
   Spectrum: { bookName: "Spectrum Book", category: "History" },
@@ -153,7 +143,6 @@ const categoryToBookMap = {
   Polity: { bookName: "Laxmikanth Indian Polity", category: "Politics" }
 };
 
-// Health Check Endpoint
 app.get("/health", (req, res) => {
   res.status(200).json({
     status: "OK",
@@ -163,14 +152,12 @@ app.get("/health", (req, res) => {
   });
 });
 
-// Routes for Default Handling
 app.get("/", (req, res) => {
   res.status(200).json({ status: "OK", message: "TrainWithMe Backend API", mongoConnected });
 });
 app.get("/favicon.ico", (req, res) => res.status(204).end());
 app.get("/favicon.png", (req, res) => res.status(204).end());
 
-// Endpoint to fetch QandA pairs
 app.get("/user/get-qanda", async (req, res) => {
   try {
     const { userId, book, bookName, category, page = 1, limit = 10 } = req.query;
@@ -201,10 +188,12 @@ app.get("/user/get-qanda", async (req, res) => {
     }
 
     const qanda = await db.collection("QandA")
-      .find(query)
-      .sort({ createdAt: -1 })
-      .skip((parseInt(page) - 1) * parseInt(limit))
-      .limit(parseInt(limit))
+      .aggregate([
+        { $match: query },
+        { $sample: { size: parseInt(limit) } },
+        { $skip: (parseInt(page) - 1) * parseInt(limit) },
+        { $limit: parseInt(limit) }
+      ])
       .toArray();
 
     console.log(`Fetched ${qanda.length} QandA pairs for query:`, query);
@@ -215,7 +204,6 @@ app.get("/user/get-qanda", async (req, res) => {
   }
 });
 
-// Endpoint to fetch MCQs for a book
 app.post("/user/get-book-mcqs", async (req, res) => {
   try {
     const { book, requestedCount } = req.body;
@@ -235,7 +223,6 @@ app.post("/user/get-book-mcqs", async (req, res) => {
       category: categoryToBookMap[book].category
     };
 
-    // Log available MCQs
     const totalAvailable = await db.collection("mcqs").countDocuments(query);
     console.log(`Available MCQs for book "${book}" (category: "${categoryToBookMap[book].category}"): ${totalAvailable}`);
 
@@ -259,7 +246,6 @@ app.post("/user/get-book-mcqs", async (req, res) => {
   }
 });
 
-// Endpoint to fetch current affairs articles
 app.get("/admin/get-current-affairs-articles", async (req, res) => {
   try {
     const { startDate, page = 1, limit = 10 } = req.query;
@@ -290,7 +276,6 @@ app.get("/admin/get-current-affairs-articles", async (req, res) => {
   }
 });
 
-// Endpoint to fetch user profile
 app.get("/user/get-profile", async (req, res) => {
   try {
     const { email } = req.query;
@@ -320,10 +305,9 @@ app.get("/user/get-profile", async (req, res) => {
   }
 });
 
-// Batch fetch MCQs for multiple books/subjects in one request
 app.post("/user/get-multi-book-mcqs", async (req, res) => {
   try {
-    const { books } = req.body; // books: [{ book, requestedCount }]
+    const { books } = req.body;
     if (!Array.isArray(books) || books.length === 0) {
       return res.status(400).json({ error: "Missing or invalid books array" });
     }
@@ -331,7 +315,6 @@ app.post("/user/get-multi-book-mcqs", async (req, res) => {
       return res.status(503).json({ error: "Database not connected" });
     }
 
-    // Prepare all queries
     const queries = books.map(({ book, requestedCount }) => {
       if (!book || !categoryToBookMap[book] || !requestedCount) return null;
       return db.collection("mcqs")
@@ -343,10 +326,7 @@ app.post("/user/get-multi-book-mcqs", async (req, res) => {
         .then(mcqs => ({ book, mcqs }));
     }).filter(Boolean);
 
-    // Run all queries in parallel
     const results = await Promise.all(queries);
-
-    // Flatten all MCQs into one array
     const allMCQs = results.flatMap(r => r.mcqs);
 
     res.status(200).json({ mcqs: allMCQs });
@@ -356,7 +336,6 @@ app.post("/user/get-multi-book-mcqs", async (req, res) => {
   }
 });
 
-// Global Error Middleware
 app.use((err, req, res, next) => {
   console.error(`Unhandled error: ${err.message}, Stack: ${err.stack}`);
   res.setHeader('Access-Control-Allow-Origin', allowedOrigins.includes(req.headers.origin) ? req.headers.origin : '*');
@@ -366,11 +345,9 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Start the server
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
 
-// Export for Vercel serverless
 module.exports = app;
