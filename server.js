@@ -190,9 +190,9 @@ app.get("/user/get-qanda", async (req, res) => {
     const qanda = await db.collection("QandA")
       .aggregate([
         { $match: query },
-        { $sample: { size: parseInt(limit) } },
         { $skip: (parseInt(page) - 1) * parseInt(limit) },
-        { $limit: parseInt(limit) }
+        { $limit: parseInt(limit) },
+        { $sample: { size: parseInt(limit) } }
       ])
       .toArray();
 
