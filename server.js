@@ -7,7 +7,7 @@ dotenv.config();
 const app = express();
 
 const allowedOrigins = [
-  "https://trainwithme.in", "http://localhost:3000", "https://localhost:3000", "http://localhost:3001",
+ "https://frontend-nine-jet-66.vercel.app", "https://trainwithme.in", "http://localhost:3000", "https://localhost:3000", "http://localhost:3001",
   "https://trainwithme-backend.vercel.app", "https://trainwithme-backend-fpbqr9rqr-yogesh-yadavs-projects-b7fc36f0.vercel.app",
   "https://backend-lyart-one-89.vercel.app", "https://backend-krowav4fm-yogesh-yadavs-projects-b7fc36f0.vercel.app",
   "https://backend-n5ubeeejd-yogesh-yadavs-projects-b7fc36f0.vercel.app", "https://backend-production-d60b.up.railway.app",
