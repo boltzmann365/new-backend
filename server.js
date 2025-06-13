@@ -335,6 +335,63 @@ app.post("/user/get-multi-book-mcqs", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch MCQs", details: error.message });
   }
 });
+app.post("/save-user", async (req, res) => {
+  try {
+    const { email, username } = req.body;
+    console.log(`Received request to save/update user: email=${email}, username=${username}`);
+
+    if (!email || !username) {
+      console.log("Validation failed: Missing email or username");
+      return res.status(400).json({ error: "Missing email or username" });
+    }
+
+    if (!mongoConnected || !db) {
+      console.error("Database not connected during user save");
+      return res.status(503).json({ error: "Database not connected" });
+    }
+
+    const usersCollection = db.collection("users");
+
+    // This is the key database operation.
+    // It finds a user by their unique email and updates their username.
+    // The `upsert: true` option is crucial:
+    // - If a user with that email exists, it updates the username.
+    // - If no user with that email exists, it creates a new user document.
+    const result = await usersCollection.updateOne(
+      { email: email }, // The filter to find the document
+      {
+        $set: { username: username, updatedAt: new Date() }, // The fields to update
+        $setOnInsert: { email: email, createdAt: new Date() } // The fields to set only if a new document is created
+      },
+      { upsert: true } // The option to enable update-or-insert
+    );
+
+    console.log("User save/update result:", result);
+
+    if (result.upsertedCount > 0) {
+      console.log(`Successfully created new user: ${email}`);
+      res.status(201).json({ message: "User created successfully", userId: result.upsertedId });
+    } else if (result.modifiedCount > 0) {
+      console.log(`Successfully updated username for: ${email}`);
+      res.status(200).json({ message: "Username updated successfully" });
+    } else {
+      console.log(`User already up-to-date: ${email}`);
+      res.status(200).json({ message: "User data is already up to date" });
+    }
+
+  } catch (error) {
+    console.error("Error saving user:", error.message, error.stack);
+    // Handle potential duplicate key error if something goes wrong with the unique index
+    if (error.code === 11000) {
+      return res.status(409).json({ error: "A user with this email already exists." });
+    }
+    res.status(500).json({ error: "Failed to save user", details: error.message });
+  }
+});
+// ===================================================================
+// END: NEW ROUTE HANDLER
+// ===================================================================
+
 
 app.use((err, req, res, next) => {
   console.error(`Unhandled error: ${err.message}, Stack: ${err.stack}`);
