@@ -7,7 +7,7 @@ dotenv.config();
 const app = express();
 
 const allowedOrigins = [
- "https://frontend-nine-jet-66.vercel.app", "https://trainwithme.in", "http://localhost:3000", "https://localhost:3000", "http://localhost:3001",
+  "https://frontend-nine-jet-66.vercel.app", "https://trainwithme.in", "http://localhost:3000", "https://localhost:3000", "http://localhost:3001",
   "https://trainwithme-backend.vercel.app", "https://trainwithme-backend-fpbqr9rqr-yogesh-yadavs-projects-b7fc36f0.vercel.app",
   "https://backend-lyart-one-89.vercel.app", "https://backend-krowav4fm-yogesh-yadavs-projects-b7fc36f0.vercel.app",
   "https://backend-n5ubeeejd-yogesh-yadavs-projects-b7fc36f0.vercel.app", "https://backend-production-d60b.up.railway.app",
@@ -76,10 +76,23 @@ async function connectToMongoDB(uri) {
       db = client.db("trainwithme");
       mongoConnected = true;
 
+      // Drop outdated username_1 index if it exists
+      try {
+        await db.collection("battleground_rankings").dropIndex("username_1");
+        console.log("Dropped outdated username_1 index");
+      } catch (err) {
+        if (err.codeName === "IndexNotFound") {
+          console.log("username_1 index not found, no need to drop");
+        } else {
+          console.error("Error dropping username_1 index:", err.message);
+        }
+      }
+
+      // Create new indexes
       await db.collection("mcqs").createIndex({ category: 1, createdAt: -1 });
       await db.collection("users").createIndex({ email: 1 }, { unique: true });
-      await db.collection("battleground_rankings").createIndex({ username: 1 }, { unique: true });
-      await db.collection("battleground_rankings").createIndex({ score: -1, date: 1 });
+      await db.collection("battleground_rankings").createIndex({ username: 1, questionCount: 1 }, { unique: true });
+      await db.collection("battleground_rankings").createIndex({ questionCount: 1, score: -1, date: 1 });
       await db.collection("reported_mcqs").createIndex(
         { userId: 1, mcqId: 1 },
         { unique: true, background: false }
@@ -315,26 +328,42 @@ app.post("/user/get-multi-book-mcqs", async (req, res) => {
       return res.status(503).json({ error: "Database not connected" });
     }
 
-    const queries = books.map(({ book, requestedCount }) => {
-      if (!book || !categoryToBookMap[book] || !requestedCount) return null;
-      return db.collection("mcqs")
-        .aggregate([
-          { $match: { category: categoryToBookMap[book].category } },
-          { $sample: { size: Math.min(parseInt(requestedCount), 100) } }
-        ])
-        .toArray()
-        .then(mcqs => ({ book, mcqs }));
-    }).filter(Boolean);
+    const results = await Promise.all(
+      books.map(async ({ book, requestedCount }) => {
+        if (!book || !categoryToBookMap[book] || !requestedCount) {
+          return { book, mcqs: [], totalAvailable: 0, error: "Invalid book or requestedCount" };
+        }
+        const category = categoryToBookMap[book].category;
+        const totalAvailable = await db.collection("mcqs").countDocuments({ category });
+        const mcqs = totalAvailable > 0
+          ? await db.collection("mcqs")
+              .aggregate([
+                { $match: { category } },
+                { $sample: { size: Math.min(parseInt(requestedCount), totalAvailable) } }
+              ])
+              .toArray()
+          : [];
+        return { book, mcqs, totalAvailable, error: totalAvailable === 0 ? `No MCQs available for category ${category}` : null };
+      })
+    );
 
-    const results = await Promise.all(queries);
     const allMCQs = results.flatMap(r => r.mcqs);
+    const diagnostics = results.map(r => ({
+      book: r.book,
+      category: categoryToBookMap[r.book]?.category,
+      requested: parseInt(r.mcqs?.length || 0),
+      available: r.totalAvailable || 0,
+      error: r.error || null
+    }));
 
-    res.status(200).json({ mcqs: allMCQs });
+    console.log("Fetched MCQs:", allMCQs.length, "Diagnostics:", diagnostics);
+    res.status(200).json({ mcqs: allMCQs, diagnostics });
   } catch (error) {
     console.error("Error in get-multi-book-mcqs:", error.message, error.stack);
     res.status(500).json({ error: "Failed to fetch MCQs", details: error.message });
   }
 });
+
 app.post("/save-user", async (req, res) => {
   try {
     const { email, username } = req.body;
@@ -351,19 +380,13 @@ app.post("/save-user", async (req, res) => {
     }
 
     const usersCollection = db.collection("users");
-
-    // This is the key database operation.
-    // It finds a user by their unique email and updates their username.
-    // The `upsert: true` option is crucial:
-    // - If a user with that email exists, it updates the username.
-    // - If no user with that email exists, it creates a new user document.
     const result = await usersCollection.updateOne(
-      { email: email }, // The filter to find the document
+      { email: email },
       {
-        $set: { username: username, updatedAt: new Date() }, // The fields to update
-        $setOnInsert: { email: email, createdAt: new Date() } // The fields to set only if a new document is created
+        $set: { username: username, updatedAt: new Date() },
+        $setOnInsert: { email: email, createdAt: new Date() }
       },
-      { upsert: true } // The option to enable update-or-insert
+      { upsert: true }
     );
 
     console.log("User save/update result:", result);
@@ -378,20 +401,101 @@ app.post("/save-user", async (req, res) => {
       console.log(`User already up-to-date: ${email}`);
       res.status(200).json({ message: "User data is already up to date" });
     }
-
   } catch (error) {
     console.error("Error saving user:", error.message, error.stack);
-    // Handle potential duplicate key error if something goes wrong with the unique index
     if (error.code === 11000) {
       return res.status(409).json({ error: "A user with this email already exists." });
     }
     res.status(500).json({ error: "Failed to save user", details: error.message });
   }
 });
-// ===================================================================
-// END: NEW ROUTE HANDLER
-// ===================================================================
 
+app.get("/battleground/leaderboard", async (req, res) => {
+  try {
+    const { questionCount } = req.query;
+    console.log(`Fetching leaderboard for questionCount: ${questionCount}`);
+
+    if (!questionCount || ![10, 25, 50, 100].includes(parseInt(questionCount))) {
+      console.log(`Validation failed: Invalid or missing questionCount - ${questionCount}`);
+      return res.status(400).json({ error: "Invalid or missing questionCount. Valid values are 10, 25, 50, 100." });
+    }
+
+    if (!mongoConnected || !db) {
+      console.error("Database not connected");
+      return res.status(503).json({ error: "Database not connected" });
+    }
+
+    const rankings = await db.collection("battleground_rankings")
+      .find({ questionCount: parseInt(questionCount) })
+      .sort({ score: -1, date: 1 })
+      .limit(50)
+      .toArray();
+
+    console.log(`Fetched ${rankings.length} leaderboard entries for ${questionCount}-question test`);
+    res.status(200).json({ rankings });
+  } catch (error) {
+    console.error("Error fetching leaderboard:", error.message, error.stack);
+    res.status(500).json({ error: "Failed to fetch leaderboard", details: error.message });
+  }
+});
+
+app.post("/battleground/submit", async (req, res) => {
+  try {
+    const { username, score, questionCount } = req.body;
+    console.log(`Received score submission: username=${username}, score=${score}, questionCount=${questionCount}`);
+
+    if (!username || score === undefined || !questionCount) {
+      console.log("Validation failed: Missing username, score, or questionCount");
+      return res.status(400).json({ error: "Missing username, score, or questionCount" });
+    }
+
+    if (![10, 25, 50, 100].includes(parseInt(questionCount))) {
+      console.log(`Validation failed: Invalid questionCount - ${questionCount}`);
+      return res.status(400).json({ error: "Invalid questionCount. Valid values are 10, 25, 50, 100." });
+    }
+
+    if (!mongoConnected || !db) {
+      console.error("Database not connected");
+      return res.status(503).json({ error: "Database not connected" });
+    }
+
+    const rankingsCollection = db.collection("battleground_rankings");
+
+    const result = await rankingsCollection.updateOne(
+      { username, questionCount: parseInt(questionCount) },
+      {
+        $set: {
+          score: parseFloat(score),
+          questionCount: parseInt(questionCount),
+          date: new Date(),
+          updatedAt: new Date()
+        },
+        $setOnInsert: { createdAt: new Date() }
+      },
+      { upsert: true }
+    );
+
+    console.log("Score submission result:", result);
+
+    const rankings = await rankingsCollection
+      .find({ questionCount: parseInt(questionCount) })
+      .sort({ score: -1, date: 1 })
+      .limit(50)
+      .toArray();
+
+    console.log(`Fetched ${rankings.length} leaderboard entries after submission for ${questionCount}-question test`);
+
+    res.status(200).json({ rankings });
+  } catch (error) {
+    console.error("Error submitting score:", error.message, error.stack);
+    if (error.code === 11000) {
+      return res.status(409).json({ 
+        error: `Duplicate submission detected for username ${req.body.username} and questionCount ${req.body.questionCount}. Each user can have one score per test type.` 
+      });
+    }
+    res.status(500).json({ error: "Failed to submit score", details: error.message });
+  }
+});
 
 app.use((err, req, res, next) => {
   console.error(`Unhandled error: ${err.message}, Stack: ${err.stack}`);
