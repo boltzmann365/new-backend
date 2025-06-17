@@ -7,11 +7,19 @@ dotenv.config();
 const app = express();
 
 const allowedOrigins = [
-  "https://frontend-nine-jet-66.vercel.app", "https://trainwithme.in", "http://localhost:3000", "https://localhost:3000", "http://localhost:3001",
-  "https://trainwithme-backend.vercel.app", "https://trainwithme-backend-fpbqr9rqr-yogesh-yadavs-projects-b7fc36f0.vercel.app",
-  "https://backend-lyart-one-89.vercel.app", "https://backend-krowav4fm-yogesh-yadavs-projects-b7fc36f0.vercel.app",
-  "https://backend-n5ubeeejd-yogesh-yadavs-projects-b7fc36f0.vercel.app", "https://backend-production-d60b.up.railway.app",
-  "https://your-frontend.up.railway.app", "https://frontend-1wn4bppay-yogesh-yadavs-projects-b7fc36f0.vercel.app",
+  "https://frontend-nine-jet-66.vercel.app",
+  "https://trainwithme.in",
+  "http://localhost:3000",
+  "https://localhost:3000",
+  "http://localhost:3001",
+  "https://trainwithme-backend.vercel.app",
+  "https://trainwithme-backend-fpbqr9rqr-yogesh-yadavs-projects-b7fc36f0.vercel.app",
+  "https://backend-lyart-one-89.vercel.app",
+  "https://backend-krowav4fm-yogesh-yadavs-projects-b7fc36f0.vercel.app",
+  "https://backend-n5ubeeejd-yogesh-yadavs-projects-b7fc36f0.vercel.app",
+  "https://backend-production-d60b.up.railway.app",
+  "https://your-frontend.up.railway.app",
+  "https://frontend-1wn4bppay-yogesh-yadavs-projects-b7fc36f0.vercel.app",
   "https://frontend-9i4djmspa-yogesh-yadavs-projects-b7fc36f0.vercel.app"
 ];
 
@@ -76,7 +84,6 @@ async function connectToMongoDB(uri) {
       db = client.db("trainwithme");
       mongoConnected = true;
 
-      // Drop outdated username_1 index if it exists
       try {
         await db.collection("battleground_rankings").dropIndex("username_1");
         console.log("Dropped outdated username_1 index");
@@ -88,7 +95,6 @@ async function connectToMongoDB(uri) {
         }
       }
 
-      // Create new indexes
       await db.collection("mcqs").createIndex({ category: 1, createdAt: -1 });
       await db.collection("users").createIndex({ email: 1 }, { unique: true });
       await db.collection("battleground_rankings").createIndex({ username: 1, questionCount: 1 }, { unique: true });
@@ -108,6 +114,14 @@ async function connectToMongoDB(uri) {
       await db.collection("QandA").createIndex(
         { bookName: 1, createdAt: -1 },
         { background: false }
+      );
+      await db.collection("userseenmcqs").createIndex(
+        { userId: 1, mcqId: 1 },
+        { unique: true, background: false }
+      );
+      await db.collection("userseenarticles").createIndex(
+        { userId: 1, articleId: 1 },
+        { unique: true, background: false }
       );
       console.log("MongoDB indexes created");
 
@@ -142,11 +156,11 @@ connectToMongoDB(process.env.MONGODB_URI).then(({ db: database, mongoConnected: 
 });
 
 const categoryToBookMap = {
-  TamilnaduHistory: { bookName: "Tamilnadu History Book", category: "History" },
-  Spectrum: { bookName: "Spectrum Book", category: "History" },
-  ArtAndCulture: { bookName: "Nitin Singhania Art and Culture Book", category: "History" },
-  FundamentalGeography: { bookName: "NCERT Class 11th Fundamentals of Physical Geography", category: "Geography" },
-  IndianGeography: { bookName: "NCERT Class 11th Indian Geography", category: "Geography" },
+  TamilnaduHistory: { bookName: "Tamilnadu History Book", category: "TamilnaduHistory" },
+  Spectrum: { bookName: "Spectrum Book", category: "Spectrum" },
+  ArtAndCulture: { bookName: "Nitin Singhania Art and Culture Book", category: "ArtAndCulture" },
+  FundamentalGeography: { bookName: "NCERT Class 11th Fundamentals of Physical Geography", category: "FundamentalGeography" },
+  IndianGeography: { bookName: "NCERT Class 11th Indian Geography", category: "IndianGeography" },
   Science: { bookName: "Disha IAS Previous Year Papers (Science Section)", category: "Science" },
   Environment: { bookName: "Shankar IAS Environment Book", category: "Environment" },
   Economy: { bookName: "Ramesh Singh Indian Economy Book", category: "Economy" },
@@ -261,8 +275,8 @@ app.post("/user/get-book-mcqs", async (req, res) => {
 
 app.get("/admin/get-current-affairs-articles", async (req, res) => {
   try {
-    const { startDate, page = 1, limit = 10 } = req.query;
-    console.log(`Fetching current affairs articles: startDate=${startDate}, page=${page}, limit=${limit}`);
+    const { startDate, page = 1, limit = 10, userId } = req.query;
+    console.log(`Fetching current affairs articles: userId=${userId || 'guest'}, startDate=${startDate}, page=${page}, limit=${limit}`);
 
     if (!mongoConnected || !db) {
       console.error("Database not connected");
@@ -275,13 +289,64 @@ app.get("/admin/get-current-affairs-articles", async (req, res) => {
     }
 
     const articles = await db.collection("current_affairs_articles")
-      .find(query)
-      .sort({ date: -1 })
-      .skip((parseInt(page) - 1) * parseInt(limit))
-      .limit(parseInt(limit))
+      .aggregate([
+        { $match: query },
+        {
+          $lookup: {
+            from: "userseenarticles",
+            let: { articleId: "$_id" },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $and: [
+                      { $eq: ["$articleId", "$$articleId"] },
+                      { $eq: ["$userId", userId || "guest"] }
+                    ]
+                  }
+                }
+              }
+            ],
+            as: "seenInfo"
+          }
+        },
+        {
+          $addFields: {
+            seenCount: {
+              $cond: {
+                if: { $gt: [{ $size: "$seenInfo" }, 0] },
+                then: { $arrayElemAt: ["$seenInfo.seenCount", 0] },
+                else: 0
+              }
+            }
+          }
+        },
+        // ========================================================
+        // START: FIX FOR PAGINATION
+        // Adding `_id: 1` as a final tie-breaker makes the sort order
+        // completely stable, preventing duplicate articles across pages.
+        // ========================================================
+        { $sort: { seenCount: 1, date: -1, _id: 1 } },
+        // ========================================================
+        // END: FIX FOR PAGINATION
+        // ========================================================
+        { $skip: (parseInt(page) - 1) * parseInt(limit) },
+        { $limit: parseInt(limit) },
+        {
+          $project: {
+            _id: 1,
+            heading: 1,
+            content: 1,
+            date: 1,
+            createdAt: 1,
+            imageUrl: 1,
+            seenCount: 1
+          }
+        }
+      ])
       .toArray();
 
-    console.log(`Fetched ${articles.length} current affairs articles for startDate=${startDate}, page=${page}`);
+    console.log(`Fetched ${articles.length} current affairs articles for userId=${userId || 'guest'}, startDate=${startDate}, page=${page}`);
     res.status(200).json({ articles });
   } catch (error) {
     console.error("Error fetching current affairs articles:", error.message, error.stack);
@@ -289,10 +354,44 @@ app.get("/admin/get-current-affairs-articles", async (req, res) => {
   }
 });
 
+
+app.post("/user/mark-article-seen", async (req, res) => {
+  try {
+    const { userId, articleId } = req.body;
+    console.log(`Marking article as seen: userId=${userId}, articleId=${articleId}`);
+
+    if (!userId || typeof userId !== 'string' || !articleId) {
+      console.log("Validation failed: Missing or invalid userId or articleId");
+      return res.status(400).json({ error: "Missing or invalid userId or articleId" });
+    }
+
+    if (!mongoConnected || !db) {
+      console.error("Database not connected");
+      return res.status(503).json({ error: "Database not connected" });
+    }
+
+    const result = await db.collection("userseenarticles").updateOne(
+      { userId: userId, articleId: new ObjectId(articleId) },
+      {
+        $inc: { seenCount: 1 },
+        $set: { lastSeen: new Date() },
+        $setOnInsert: { createdAt: new Date() }
+      },
+      { upsert: true }
+    );
+
+    console.log(`Article marked as seen: userId=${userId}, articleId=${articleId}, result:`, result);
+    res.status(200).json({ success: true });
+  } catch (error) {
+    console.error("Error marking article as seen:", error.message, error.stack);
+    res.status(500).json({ error: "Failed to mark article as seen", details: error.message });
+  }
+});
+
 app.get("/user/get-profile", async (req, res) => {
   try {
     const { email } = req.query;
-    console.log(`Fetching email: ${email}`);
+    console.log(`Fetching profile for email: ${email}`);
 
     if (!email) {
       console.log(`Validation failed: Missing email`);
@@ -320,30 +419,117 @@ app.get("/user/get-profile", async (req, res) => {
 
 app.post("/user/get-multi-book-mcqs", async (req, res) => {
   try {
-    const { books } = req.body;
+    const { books, userId } = req.body;
+    console.log(`Fetching MCQs for books: ${JSON.stringify(books)}, userId: ${userId}`);
+
     if (!Array.isArray(books) || books.length === 0) {
-      return res.status(400).json({ error: "Missing or invalid books array" });
+      console.log("Validation failed: Missing or invalid books array");
+      return res.status(400).json({ error: "Missing or invalid books array", diagnostics: [] });
     }
+    if (!userId || typeof userId !== 'string') {
+      console.log("Validation failed: Missing or invalid userId");
+      return res.status(400).json({ error: "Missing or invalid userId", diagnostics: [] });
+    }
+
     if (!mongoConnected || !db) {
-      return res.status(503).json({ error: "Database not connected" });
+      console.error("Database not connected");
+      return res.status(503).json({ error: "Database not connected", diagnostics: [] });
     }
+
+    const seenMcqs = await db.collection("userseenmcqs")
+      .find({ userId })
+      .project({ mcqId: 1 })
+      .toArray();
+    const seenMcqIds = seenMcqs.map(mcq => new ObjectId(mcq.mcqId));
+    console.log(`Found ${seenMcqIds.length} seen MCQs for userId: ${userId}`);
 
     const results = await Promise.all(
       books.map(async ({ book, requestedCount }) => {
         if (!book || !categoryToBookMap[book] || !requestedCount) {
-          return { book, mcqs: [], totalAvailable: 0, error: "Invalid book or requestedCount" };
+          console.log(`Invalid parameters for book: ${book}, requestedCount: ${requestedCount}`);
+          return { book, mcqs: [], totalAvailable: 0, excludedSeen: 0, error: "Invalid book or requestedCount" };
         }
         const category = categoryToBookMap[book].category;
-        const totalAvailable = await db.collection("mcqs").countDocuments({ category });
-        const mcqs = totalAvailable > 0
-          ? await db.collection("mcqs")
-              .aggregate([
-                { $match: { category } },
-                { $sample: { size: Math.min(parseInt(requestedCount), totalAvailable) } }
-              ])
-              .toArray()
-          : [];
-        return { book, mcqs, totalAvailable, error: totalAvailable === 0 ? `No MCQs available for category ${category}` : null };
+
+        let query = {
+          category,
+          _id: { $nin: seenMcqIds }
+        };
+        let totalAvailable = await db.collection("mcqs").countDocuments({ category });
+        let totalUnseen = await db.collection("mcqs").countDocuments(query);
+        console.log(`Total available MCQs for category ${category}: ${totalAvailable}, Unseen: ${totalUnseen}`);
+
+        let mcqs = [];
+        let error = null;
+        let usingSeenMcqs = false;
+
+        if (totalUnseen > 0) {
+          mcqs = await db.collection("mcqs")
+            .aggregate([
+              { $match: query },
+              { $sample: { size: Math.min(parseInt(requestedCount) * 10, 100) } },
+              { $limit: Math.min(parseInt(requestedCount), totalUnseen) }
+            ])
+            .toArray();
+        }
+
+        if (mcqs.length === 0 && totalUnseen === 0 && totalAvailable > 0) {
+          console.log(`No unseen MCQs for ${category}, fetching seen MCQs with lowest seenCount`);
+          usingSeenMcqs = true;
+          mcqs = await db.collection("mcqs")
+            .aggregate([
+              { $match: { category } },
+              {
+                $lookup: {
+                  from: "userseenmcqs",
+                  let: { mcqId: "$_id" },
+                  pipeline: [
+                    {
+                      $match: {
+                        $expr: {
+                          $and: [
+                            { $eq: ["$mcqId", "$$mcqId"] },
+                            { $eq: ["$userId", userId] }
+                          ]
+                        }
+                      }
+                    }
+                  ],
+                  as: "seenInfo"
+                }
+              },
+              {
+                $addFields: {
+                  seenCount: {
+                    $cond: {
+                      if: { $gt: [{ $size: "$seenInfo" }, 0] },
+                      then: { $arrayElemAt: ["$seenInfo.seenCount", 0] },
+                      else: 0
+                    }
+                  }
+                }
+              },
+              { $sort: { seenCount: 1 } },
+              { $sample: { size: Math.min(parseInt(requestedCount) * 10, 100) } },
+              { $limit: parseInt(requestedCount) }
+            ])
+            .toArray();
+
+          if (mcqs.length === 0) {
+            error = `No MCQs available for category ${category}, even with seen MCQs`;
+          }
+        } else if (mcqs.length === 0 && totalAvailable === 0) {
+          error = `No MCQs available for category ${category}`;
+        }
+
+        return { 
+          book, 
+          mcqs, 
+          totalAvailable, 
+          excludedSeen: totalAvailable - totalUnseen, 
+          usingSeenMcqs,
+          error 
+        };
       })
     );
 
@@ -353,14 +539,62 @@ app.post("/user/get-multi-book-mcqs", async (req, res) => {
       category: categoryToBookMap[r.book]?.category,
       requested: parseInt(r.mcqs?.length || 0),
       available: r.totalAvailable || 0,
+      excludedSeen: r.excludedSeen || 0,
+      usingSeenMcqs: r.usingSeenMcqs || false,
       error: r.error || null
     }));
 
     console.log("Fetched MCQs:", allMCQs.length, "Diagnostics:", diagnostics);
-    res.status(200).json({ mcqs: allMCQs, diagnostics });
+
+    const uniqueMCQs = [];
+    const seenIds = new Set();
+    for (const mcq of allMCQs) {
+      const mcqIdStr = mcq._id.toString();
+      if (!seenIds.has(mcqIdStr)) {
+        seenIds.add(mcqIdStr);
+        uniqueMCQs.push(mcq);
+      } else {
+        console.warn(`Duplicate MCQ ID filtered out on server: ${mcqIdStr}`);
+      }
+    }
+
+    res.status(200).json({ mcqs: uniqueMCQs, diagnostics });
   } catch (error) {
     console.error("Error in get-multi-book-mcqs:", error.message, error.stack);
-    res.status(500).json({ error: "Failed to fetch MCQs", details: error.message });
+    res.status(500).json({ error: "Failed to fetch MCQs", details: error.message, diagnostics: [] });
+  }
+});
+
+app.post("/user/mark-mcq-seen", async (req, res) => {
+  try {
+    const { userId, mcqId } = req.body;
+    console.log(`Marking MCQ as seen: userId=${userId}, mcqId=${mcqId}`);
+
+    if (!userId || typeof userId !== 'string' || !mcqId) {
+      console.log("Validation failed: Missing or invalid userId or mcqId");
+      return res.status(400).json({ error: "Missing or invalid userId or mcqId" });
+    }
+
+    if (!mongoConnected || !db) {
+      console.error("Database not connected");
+      return res.status(503).json({ error: "Database not connected" });
+    }
+
+    const result = await db.collection("userseenmcqs").updateOne(
+      { userId: userId, mcqId: new ObjectId(mcqId) },
+      {
+        $inc: { seenCount: 1 },
+        $set: { lastSeen: new Date() },
+        $setOnInsert: { createdAt: new Date() }
+      },
+      { upsert: true }
+    );
+
+    console.log(`MCQ marked as seen: userId=${userId}, mcqId=${mcqId}, result:`, result);
+    res.status(200).json({ success: true });
+  } catch (error) {
+    console.error("Error marking MCQ as seen:", error.message, error.stack);
+    res.status(500).json({ error: "Failed to mark MCQ as seen", details: error.message });
   }
 });
 
