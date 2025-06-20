@@ -165,9 +165,11 @@ const categoryToBookMap = {
   Environment: { bookName: "Shankar IAS Environment Book", category: "Environment" },
   Economy: { bookName: "Ramesh Singh Indian Economy Book", category: "Economy" },
   CSAT: { bookName: "Disha IAS Previous Year Papers (CSAT Section)", category: "CSAT" },
-  CurrentAffairs: { bookName: "Vision IAS Current Affairs Magazine", category: "Current Affairs" },
+  CurrentAffairs: { bookName: "Vision Ias April Magzine", category: "Current Affairs" },
   PreviousYearPapers: { bookName: "Disha Publication’s UPSC Prelims Previous Year Papers", category: "PreviousYearPapers" },
-  Polity: { bookName: "Laxmikanth Indian Polity", category: "Politics" }
+  Polity: { bookName: "Laxmikanth Indian Polity", category: "Politics" },
+  VisionIasMayMagazine: { bookName: "Vision Ias May Magzine", category: "Current Affairs" },
+
 };
 
 app.get("/health", (req, res) => {
@@ -247,7 +249,8 @@ app.post("/user/get-book-mcqs", async (req, res) => {
     }
 
     const query = {
-      category: categoryToBookMap[book].category
+      category: categoryToBookMap[book].category,
+      book: categoryToBookMap[book].bookName 
     };
 
     const totalAvailable = await db.collection("mcqs").countDocuments(query);
