@@ -84,46 +84,31 @@ async function connectToMongoDB(uri) {
       db = client.db("trainwithme");
       mongoConnected = true;
 
+      // FIX: Add a cleanup step to remove documents that cause the index build to fail.
       try {
-        await db.collection("battleground_rankings").dropIndex("username_1");
-        console.log("Dropped outdated username_1 index");
-      } catch (err) {
-        if (err.codeName === "IndexNotFound") {
-          console.log("username_1 index not found, no need to drop");
-        } else {
-          console.error("Error dropping username_1 index:", err.message);
-        }
+          console.log("Cleaning up invalid ranking data before creating indexes...");
+          const cleanupResult = await db.collection("battleground_rankings").deleteMany({ userId: null });
+          console.log(`Cleanup complete. Removed ${cleanupResult.deletedCount} documents with null userId.`);
+      } catch (cleanupError) {
+          console.error("Error during data cleanup:", cleanupError.message);
+          // We don't throw here; we let the index creation attempt proceed and potentially fail,
+          // which provides a clear error message if the cleanup didn't solve it.
       }
-
+      
       await db.collection("mcqs").createIndex({ category: 1, createdAt: -1 });
       await db.collection("users").createIndex({ email: 1 }, { unique: true });
-      await db.collection("battleground_rankings").createIndex({ username: 1, questionCount: 1 }, { unique: true });
-      await db.collection("battleground_rankings").createIndex({ questionCount: 1, score: -1, date: 1 });
-      await db.collection("reported_mcqs").createIndex(
-        { userId: 1, mcqId: 1 },
-        { unique: true, background: false }
-      );
-      await db.collection("current_affairs_articles").createIndex(
-        { date: -1, category: 1 },
-        { background: false }
-      );
-      await db.collection("parsed_current_affairs").createIndex(
-        { createdAt: -1 },
-        { background: false }
-      );
-      await db.collection("QandA").createIndex(
-        { bookName: 1, createdAt: -1 },
-        { background: false }
-      );
-      await db.collection("userseenmcqs").createIndex(
-        { userId: 1, mcqId: 1 },
-        { unique: true, background: false }
-      );
-      await db.collection("userseenarticles").createIndex(
-        { userId: 1, articleId: 1 },
-        { unique: true, background: false }
-      );
-      console.log("MongoDB indexes created");
+      await db.collection("battleground_rankings").createIndex({ userId: 1, book: 1 }, { unique: true, sparse: true });
+      await db.collection("battleground_rankings").createIndex({ userId: 1, questionCount: 1 }, { unique: true, sparse: true });
+      await db.collection("battleground_rankings").createIndex({ book: 1, percentage: -1 });
+      await db.collection("battleground_rankings").createIndex({ questionCount: 1, score: -1 });
+      await db.collection("reported_mcqs").createIndex({ userId: 1, mcqId: 1 }, { unique: true });
+      await db.collection("current_affairs_articles").createIndex({ date: -1, category: 1 });
+      await db.collection("parsed_current_affairs").createIndex({ createdAt: -1 });
+      await db.collection("QandA").createIndex({ bookName: 1, createdAt: -1 });
+      await db.collection("userseenmcqs").createIndex({ userId: 1, mcqId: 1 }, { unique: true });
+      await db.collection("userseenarticles").createIndex({ userId: 1, articleId: 1 }, { unique: true });
+
+      console.log("MongoDB indexes ensured");
 
       client.on('error', (err) => {
         console.error("MongoDB client error:", err.message);
@@ -169,7 +154,6 @@ const categoryToBookMap = {
   PreviousYearPapers: { bookName: "Disha Publication’s UPSC Prelims Previous Year Papers", category: "PreviousYearPapers" },
   Polity: { bookName: "Laxmikanth Indian Polity", category: "Politics" },
   VisionIasMayMagazine: { bookName: "Vision Ias May Magzine", category: "Current Affairs" },
-
 };
 
 app.get("/health", (req, res) => {
@@ -216,14 +200,12 @@ app.get("/user/get-qanda", async (req, res) => {
       query.category = category;
     }
 
-    const qanda = await db.collection("QandA")
-      .aggregate([
-        { $match: query },
-        { $skip: (parseInt(page) - 1) * parseInt(limit) },
-        { $limit: parseInt(limit) },
-        { $sample: { size: parseInt(limit) } }
-      ])
-      .toArray();
+const qanda = await db.collection("QandA")
+  .aggregate([
+    { $match: query },
+    { $sample: { size: parseInt(limit) } }
+  ])
+  .toArray();
 
     console.log(`Fetched ${qanda.length} QandA pairs for query:`, query);
     res.status(200).json({ qanda });
@@ -252,9 +234,6 @@ app.post("/user/get-book-mcqs", async (req, res) => {
       category: categoryToBookMap[book].category,
       book: categoryToBookMap[book].bookName 
     };
-
-    const totalAvailable = await db.collection("mcqs").countDocuments(query);
-    console.log(`Available MCQs for book "${book}" (category: "${categoryToBookMap[book].category}"): ${totalAvailable}`);
 
     const mcqs = await db.collection("mcqs")
       .aggregate([
@@ -324,15 +303,7 @@ app.get("/admin/get-current-affairs-articles", async (req, res) => {
             }
           }
         },
-        // ========================================================
-        // START: FIX FOR PAGINATION
-        // Adding `_id: 1` as a final tie-breaker makes the sort order
-        // completely stable, preventing duplicate articles across pages.
-        // ========================================================
         { $sort: { seenCount: 1, date: -1, _id: 1 } },
-        // ========================================================
-        // END: FIX FOR PAGINATION
-        // ========================================================
         { $skip: (parseInt(page) - 1) * parseInt(limit) },
         { $limit: parseInt(limit) },
         {
@@ -648,91 +619,99 @@ app.post("/save-user", async (req, res) => {
 });
 
 app.get("/battleground/leaderboard", async (req, res) => {
-  try {
-    const { questionCount } = req.query;
-    console.log(`Fetching leaderboard for questionCount: ${questionCount}`);
+    try {
+        const { questionCount, book } = req.query;
+        console.log(`Fetching leaderboard for: questionCount=${questionCount}, book=${book}`);
 
-    if (!questionCount || ![10, 25, 50, 100].includes(parseInt(questionCount))) {
-      console.log(`Validation failed: Invalid or missing questionCount - ${questionCount}`);
-      return res.status(400).json({ error: "Invalid or missing questionCount. Valid values are 10, 25, 50, 100." });
+        if (!mongoConnected || !db) {
+            return res.status(503).json({ error: "Database not connected" });
+        }
+
+        let query = {};
+        let sort = {};
+
+        if (book) {
+            query = { book: book };
+            sort = { percentage: -1, date: -1 };
+        } else if (questionCount) {
+            query = { questionCount: parseInt(questionCount) };
+            sort = { score: -1, date: 1 };
+        } else {
+            return res.status(400).json({ error: "Missing required parameter: either 'book' or 'questionCount'." });
+        }
+
+        const rankings = await db.collection("battleground_rankings")
+            .find(query)
+            .sort(sort)
+            .limit(50)
+            .toArray();
+
+        console.log(`Fetched ${rankings.length} leaderboard entries.`);
+        res.status(200).json({ rankings });
+    } catch (error) {
+        console.error("Error fetching leaderboard:", error.message, error.stack);
+        res.status(500).json({ error: "Failed to fetch leaderboard", details: error.message });
     }
-
-    if (!mongoConnected || !db) {
-      console.error("Database not connected");
-      return res.status(503).json({ error: "Database not connected" });
-    }
-
-    const rankings = await db.collection("battleground_rankings")
-      .find({ questionCount: parseInt(questionCount) })
-      .sort({ score: -1, date: 1 })
-      .limit(50)
-      .toArray();
-
-    console.log(`Fetched ${rankings.length} leaderboard entries for ${questionCount}-question test`);
-    res.status(200).json({ rankings });
-  } catch (error) {
-    console.error("Error fetching leaderboard:", error.message, error.stack);
-    res.status(500).json({ error: "Failed to fetch leaderboard", details: error.message });
-  }
 });
 
 app.post("/battleground/submit", async (req, res) => {
-  try {
-    const { username, score, questionCount } = req.body;
-    console.log(`Received score submission: username=${username}, score=${score}, questionCount=${questionCount}`);
+    try {
+        const { username, userId, score, questionCount, percentage, book } = req.body;
+        console.log(`Received score submission:`, req.body);
 
-    if (!username || score === undefined || !questionCount) {
-      console.log("Validation failed: Missing username, score, or questionCount");
-      return res.status(400).json({ error: "Missing username, score, or questionCount" });
+        if (!username || !userId) {
+            return res.status(400).json({ error: "Missing username or userId" });
+        }
+
+        if (!mongoConnected || !db) {
+            return res.status(503).json({ error: "Database not connected" });
+        }
+
+        let filter, update;
+
+        if (book && percentage !== undefined) {
+            filter = { userId: userId, book: book };
+            update = {
+                $set: {
+                    username,
+                    userId,
+                    book,
+                    percentage: parseFloat(percentage),
+                    date: new Date()
+                }
+            };
+        } 
+        else if (questionCount && score !== undefined) {
+            filter = { userId: userId, questionCount: parseInt(questionCount) };
+            update = {
+                $set: {
+                    username,
+                    userId,
+                    score: parseFloat(score),
+                    questionCount: parseInt(questionCount),
+                    date: new Date()
+                }
+            };
+        } 
+        else {
+            return res.status(400).json({ error: "Invalid submission data. Must include either {book, percentage} or {questionCount, score}." });
+        }
+
+        const rankingsCollection = db.collection("battleground_rankings");
+        const result = await rankingsCollection.updateOne(filter, update, { upsert: true });
+
+        console.log("Score submission result:", result);
+        res.status(200).json({ message: "Score submitted successfully." });
+
+    } catch (error) {
+        console.error("Error submitting score:", error.message, error.stack);
+        if (error.code === 11000) {
+            return res.status(409).json({ error: `Duplicate submission detected.` });
+        }
+        res.status(500).json({ error: "Failed to submit score", details: error.message });
     }
-
-    if (![10, 25, 50, 100].includes(parseInt(questionCount))) {
-      console.log(`Validation failed: Invalid questionCount - ${questionCount}`);
-      return res.status(400).json({ error: "Invalid questionCount. Valid values are 10, 25, 50, 100." });
-    }
-
-    if (!mongoConnected || !db) {
-      console.error("Database not connected");
-      return res.status(503).json({ error: "Database not connected" });
-    }
-
-    const rankingsCollection = db.collection("battleground_rankings");
-
-    const result = await rankingsCollection.updateOne(
-      { username, questionCount: parseInt(questionCount) },
-      {
-        $set: {
-          score: parseFloat(score),
-          questionCount: parseInt(questionCount),
-          date: new Date(),
-          updatedAt: new Date()
-        },
-        $setOnInsert: { createdAt: new Date() }
-      },
-      { upsert: true }
-    );
-
-    console.log("Score submission result:", result);
-
-    const rankings = await rankingsCollection
-      .find({ questionCount: parseInt(questionCount) })
-      .sort({ score: -1, date: 1 })
-      .limit(50)
-      .toArray();
-
-    console.log(`Fetched ${rankings.length} leaderboard entries after submission for ${questionCount}-question test`);
-
-    res.status(200).json({ rankings });
-  } catch (error) {
-    console.error("Error submitting score:", error.message, error.stack);
-    if (error.code === 11000) {
-      return res.status(409).json({ 
-        error: `Duplicate submission detected for username ${req.body.username} and questionCount ${req.body.questionCount}. Each user can have one score per test type.` 
-      });
-    }
-    res.status(500).json({ error: "Failed to submit score", details: error.message });
-  }
 });
+
 
 app.use((err, req, res, next) => {
   console.error(`Unhandled error: ${err.message}, Stack: ${err.stack}`);
